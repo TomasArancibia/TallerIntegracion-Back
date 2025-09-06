@@ -13,7 +13,7 @@ class Solicitud(BaseModel):
     descripcion: str
     fecha_solicitud: datetime
     estado: str = "pendiente"  # pendiente, en_proceso, completada
-    fecha_completacion: Optional[datetime] = None
+    fecha_cierre: Optional[datetime] = None
 
 # Base de datos
 solicitudes_db = []
