@@ -101,13 +101,13 @@ def obtener_areas():
 # Crear una nueva solicitud
 @router.post("/solicitudes")
 def crear_solicitud(solicitud: Solicitud):
+    # Validar existencia de cama y área antes de agregar
     if not any(cama.id_cama == solicitud.id_cama for cama in camas_db):
         raise HTTPException(status_code=404, detail="Cama no encontrada")
-    solicitudes_db.append(solicitud)
-
     if not any(area.id_area == solicitud.id_area for area in areas_db):
         raise HTTPException(status_code=404, detail="Área no encontrada")
-    
+
+    # Agregar una única vez
     solicitudes_db.append(solicitud)
     return {"mensaje": "Solicitud creada", "solicitud": solicitud}
 
