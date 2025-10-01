@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Boolean
 from sqlalchemy.orm import relationship
 from db.session import Base
 import enum
@@ -33,6 +33,7 @@ class Cama(Base):
     id_cama = Column(Integer, primary_key=True, index=True)
     identificador_qr = Column(String, nullable=False, unique=True)
     id_habitacion = Column(Integer, ForeignKey("habitacion.id_habitacion"), nullable=False)
+    activo = Column(Boolean, nullable=False, default=True)
 
     habitacion = relationship("Habitacion", back_populates="camas")
     solicitudes = relationship("Solicitud", back_populates="cama")

@@ -3,8 +3,24 @@ from sqlalchemy.orm import Session
 from db.session import SessionLocal
 from models.models import Hospital, Habitacion, Cama, Area, Solicitud, EstadoSolicitud
 from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional
 
 router = APIRouter()
+
+# ======================
+#   Pydantic Para recibir datos en formato JSON
+# ======================
+
+class SolicitudIn(BaseModel):
+    id_cama: int                   # viene del QR (sessionStorage / validate)
+    tipo: str                      # ej: "BAÑO", "CLIMATIZACIÓN", etc.
+    descripcion: str               # texto libre del paciente
+    id_area: Optional[int] = None  # opcional
+    area_nombre: Optional[str] = None  # opcional (usaremos esto)
+
+    class Config:
+        extra = "ignore"  # ignora campos extra del front sin fallar
 
 # ======================
 #   DB DEPENDENCY
@@ -126,33 +142,46 @@ def obtener_areas(db: Session = Depends(get_db)):
 #   SOLICITUDES (tickets)
 # ======================
 
-@router.post("/solicitudes", summary="Crear solicitud")
-def crear_solicitud(
-    id_cama: int,
-    id_area: int,
-    tipo: str,
-    descripcion: str,
-    db: Session = Depends(get_db),
-):
-    # Validaciones de integridad
-    if not db.query(Cama).filter(Cama.id_cama == id_cama).first():
+@router.post("/solicitudes")
+def crear_solicitud(payload: SolicitudIn, db: Session = Depends(get_db)):
+    # Validar cama por id
+    cama = db.query(Cama).filter(Cama.id_cama == payload.id_cama).first()
+    if not cama:
         raise HTTPException(status_code=404, detail="Cama no encontrada")
 
-    if not db.query(Area).filter(Area.id_area == id_area).first():
+    # Resolver área por id o por nombre (case-insensitive)
+    area = None
+    if payload.id_area:
+        area = db.query(Area).filter(Area.id_area == payload.id_area).first()
+    elif payload.area_nombre:
+        area = db.query(Area).filter(Area.nombre.ilike(payload.area_nombre)).first()
+
+    if not area:
         raise HTTPException(status_code=404, detail="Área no encontrada")
 
+    # Crear solicitud
     solicitud = Solicitud(
-        id_cama=id_cama,
-        id_area=id_area,
-        tipo=tipo,
-        descripcion=descripcion,
+        id_cama=payload.id_cama,
+        id_area=area.id_area,
+        tipo=payload.tipo,
+        descripcion=payload.descripcion,
         estado_actual=EstadoSolicitud.ABIERTO,
         fecha_creacion=datetime.utcnow(),
     )
     db.add(solicitud)
     db.commit()
     db.refresh(solicitud)
-    return {"mensaje": "Solicitud creada", "solicitud": serialize_solicitud(solicitud)}
+
+    return {
+        "mensaje": "Solicitud creada",
+        "solicitud": {
+            "id": solicitud.id_solicitud,
+            "cama": solicitud.id_cama,
+            "area": area.nombre,
+            "estado": solicitud.estado_actual,
+            "descripcion": solicitud.descripcion,
+        },
+    }
 
 
 @router.get("/solicitudes", summary="Listar solicitudes con filtros")
