@@ -52,6 +52,7 @@ class Solicitud(Base):
     id_solicitud = Column(Integer, primary_key=True, index=True)
     id_cama = Column(Integer, ForeignKey("cama.id_cama"), nullable=False)
     id_area = Column(Integer, ForeignKey("area.id_area"), nullable=False)
+    identificador_qr = Column(String, nullable=False)
 
     tipo = Column(String, nullable=False)
     descripcion = Column(String)

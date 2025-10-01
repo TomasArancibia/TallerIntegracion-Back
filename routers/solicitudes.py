@@ -53,6 +53,7 @@ def serialize_solicitud(s: Solicitud):
         "id": s.id_solicitud,
         "id_cama": s.id_cama,
         "id_area": s.id_area,
+        "identificador_qr": s.identificador_qr,
         "tipo": s.tipo,
         "descripcion": s.descripcion,
         "estado": s.estado_actual,
@@ -163,6 +164,7 @@ def crear_solicitud(payload: SolicitudIn, db: Session = Depends(get_db)):
     solicitud = Solicitud(
         id_cama=payload.id_cama,
         id_area=area.id_area,
+        identificador_qr=cama.identificador_qr,
         tipo=payload.tipo,
         descripcion=payload.descripcion,
         estado_actual=EstadoSolicitud.ABIERTO,
@@ -177,6 +179,7 @@ def crear_solicitud(payload: SolicitudIn, db: Session = Depends(get_db)):
         "solicitud": {
             "id": solicitud.id_solicitud,
             "cama": solicitud.id_cama,
+            "identificador_qr": solicitud.identificador_qr,
             "area": area.nombre,
             "estado": solicitud.estado_actual,
             "descripcion": solicitud.descripcion,
