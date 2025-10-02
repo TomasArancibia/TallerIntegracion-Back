@@ -28,11 +28,10 @@ def seed_data(db: Session):
     db.refresh(habitacion2)
 
     # Crear camas con QR
-    cama1 = Cama(identificador_qr="QR101-A", habitacion=habitacion1)
-    cama2 = Cama(identificador_qr="QR101-B", habitacion=habitacion1)
-    cama3 = Cama(identificador_qr="QR102-A", habitacion=habitacion2)
-    db.add_all([cama1, cama2, cama3])
-    db.commit()
+    cama_101A = Cama(identificador_qr="H1-101-A", habitacion=habitacion1, activo=True)
+    cama_101B = Cama(identificador_qr="H1-101-B", habitacion=habitacion1, activo=False)  # inactiva para pruebas
+    cama_102A = Cama(identificador_qr="H1-102-A", habitacion=habitacion2, activo=True)
+    db.add_all([cama_101A, cama_101B, cama_102A]); db.commit()
 
     # Crear áreas
     area1 = Area(nombre="Mantención")
@@ -44,7 +43,7 @@ def seed_data(db: Session):
 
     # Crear solicitud de ejemplo
     solicitud = Solicitud(
-        cama=cama1,
+        cama=cama_101A,
         area=area1,
         tipo="Reparación",
         descripcion="La luz de la habitación no funciona",
