@@ -1,145 +1,228 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from db.session import SessionLocal
+from models.models import Hospital, Habitacion, Cama, Area, Solicitud, EstadoSolicitud
 from datetime import datetime
-from typing import List, Optional
 
 router = APIRouter()
 
-#Modelos de datos
+# ======================
+#   DB DEPENDENCY
+# ======================
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-class Hospital(BaseModel):
-    id_hospital: int
-    nombre: str
 
-class Habitacion(BaseModel):
-    id_habitacion: int
-    id_hospital: int
-    numero: str
+# ======================
+#   HELPERS (serializers)
+# ======================
+def serialize_hospital(h: Hospital):
+    return {"id_hospital": h.id_hospital, "nombre": h.nombre}
 
-class Cama(BaseModel):
-    id_cama: int
-    id_habitacion: int
-    identificador_qr: str
+def serialize_habitacion(hab: Habitacion):
+    return {"id_habitacion": hab.id_habitacion, "numero": hab.numero, "id_hospital": hab.id_hospital}
 
-class Area(BaseModel):
-    id_area: int
-    nombre: str  # Ejemplo: Aseo, Alimentación, Mantención, Asistencia social
+def serialize_cama(c: Cama):
+    return {"id_cama": c.id_cama, "id_habitacion": c.id_habitacion, "qr": c.identificador_qr}
 
-class Solicitud(BaseModel):
-    id_solicitud: int
-    id_cama: int
-    id_area: int
-    tipo: str # Aseo, alimentación, mantención, etc
-    descripcion: str
-    fecha_solicitud: datetime
-    estado_actual: str = "pendiente"  # pendiente, en_proceso, completada
-    fecha_creacion: datetime = datetime.now()
-    fecha_en_proceso: Optional[datetime] = None
-    fecha_resuelta: Optional[datetime] = None
-    fecha_cancelada: Optional[datetime] = None
+def serialize_area(a: Area):
+    return {"id_area": a.id_area, "nombre": a.nombre}
 
-# Data en memoria
+def serialize_solicitud(s: Solicitud):
+    return {
+        "id": s.id_solicitud,
+        "id_cama": s.id_cama,
+        "id_area": s.id_area,
+        "tipo": s.tipo,
+        "descripcion": s.descripcion,
+        "estado": s.estado_actual,
+        "fecha_creacion": s.fecha_creacion,
+        "fecha_en_proceso": s.fecha_en_proceso,
+        "fecha_resuelta": s.fecha_resuelta,
+        "fecha_cancelada": s.fecha_cancelada,
+    }
 
-hospitales_db: List[Hospital] = [
-    Hospital(id_hospital=1, nombre="UC Christus San Carlos de Apoquindo"),
-    Hospital(id_hospital=2, nombre="UC Christus Casa Central")
-]
 
-habitaciones_db: List[Habitacion] = [
-    Habitacion(id_habitacion=1, id_hospital=1, numero="101"),
-    Habitacion(id_habitacion=2, id_hospital=1, numero="102"),
-    Habitacion(id_habitacion=3, id_hospital=2, numero="201")
-]
+# ======================
+#   HOSPITALES
+# ======================
+@router.get("/hospitales", summary="Listar hospitales")
+def obtener_hospitales(db: Session = Depends(get_db)):
+    hospitales = db.query(Hospital).all()
+    return [serialize_hospital(h) for h in hospitales]
 
-camas_db: List[Cama] = [
-    Cama(id_cama=1, id_habitacion=1, identificador_qr="QR101A"),
-    Cama(id_cama=2, id_habitacion=1, identificador_qr="QR101B"),
-    Cama(id_cama=3, id_habitacion=2, identificador_qr="QR102A"),
-    Cama(id_cama=4, id_habitacion=3, identificador_qr="QR201A")
-]
+@router.get("/hospitales/{id_hospital}", summary="Obtener hospital por ID")
+def obtener_hospital(id_hospital: int, db: Session = Depends(get_db)):
+    h = db.query(Hospital).filter(Hospital.id_hospital == id_hospital).first()
+    if not h:
+        raise HTTPException(status_code=404, detail="Hospital no encontrado")
+    return serialize_hospital(h)
 
-areas_db: List[Area] = [
-    Area(id_area=1, nombre="Aseo"),
-    Area(id_area=2, nombre="Alimentación"),
-    Area(id_area=3, nombre="Mantención"),
-    Area(id_area=4, nombre="Asistencia social"),
-    Area(id_area=5, nombre="Acompañamiento espiritual"),
-]
 
-# Base de datos
-solicitudes_db = []
+# ======================
+#   HABITACIONES
+# ======================
+@router.get("/hospitales/{id_hospital}/habitaciones", summary="Listar habitaciones por hospital")
+def obtener_habitaciones_por_hospital(id_hospital: int, db: Session = Depends(get_db)):
+    # Verifica existencia del hospital para mensajes más claros
+    if not db.query(Hospital).filter(Hospital.id_hospital == id_hospital).first():
+        raise HTTPException(status_code=404, detail="Hospital no encontrado")
 
-####################################################################################################
-# SOLICITUDES
-
-# Ver hospitales
-@router.get("/hospitales")
-def obtener_hospitales():
-    return hospitales_db
-
-# Ver habitaciones por hospital
-@router.get("/hospitales/{id_hospital}/habitaciones")
-def obtener_habitaciones_por_hospital(id_hospital: int):
-    habitaciones = [hab for hab in habitaciones_db if hab.id_hospital == id_hospital]
+    habitaciones = db.query(Habitacion).filter(Habitacion.id_hospital == id_hospital).all()
     if not habitaciones:
-        raise HTTPException(status_code=404, detail="No se encontraron habitaciones para este hospital")
-    return habitaciones
+        # Devolver lista vacía es válido; si prefieres 404, deja esta línea
+        return []
+    return [serialize_habitacion(h) for h in habitaciones]
 
-# Ver camas por habitación
-@router.get("/habitaciones/{id_habitacion}/camas")
-def obtener_camas_por_habitacion(id_habitacion: int):
-    camas = [cama for cama in camas_db if cama.id_habitacion == id_habitacion]
-    if not camas:
-        raise HTTPException(status_code=404, detail="No se encontraron camas para esta habitación")
-    return camas
+@router.get("/habitaciones/{id_habitacion}", summary="Obtener habitación por ID")
+def obtener_habitacion(id_habitacion: int, db: Session = Depends(get_db)):
+    hab = db.query(Habitacion).filter(Habitacion.id_habitacion == id_habitacion).first()
+    if not hab:
+        raise HTTPException(status_code=404, detail="Habitación no encontrada")
+    return serialize_habitacion(hab)
 
-# Ver áreas
-@router.get("/areas")
-def obtener_areas():
-    return areas_db
 
-# Crear una nueva solicitud
-@router.post("/solicitudes")
-def crear_solicitud(solicitud: Solicitud):
-    # Validar existencia de cama y área antes de agregar
-    if not any(cama.id_cama == solicitud.id_cama for cama in camas_db):
+# ======================
+#   CAMAS
+# ======================
+@router.get("/habitaciones/{id_habitacion}/camas", summary="Listar camas por habitación")
+def obtener_camas_por_habitacion(id_habitacion: int, db: Session = Depends(get_db)):
+    # Verifica existencia de la habitación
+    if not db.query(Habitacion).filter(Habitacion.id_habitacion == id_habitacion).first():
+        raise HTTPException(status_code=404, detail="Habitación no encontrada")
+
+    camas = db.query(Cama).filter(Cama.id_habitacion == id_habitacion).all()
+    return [serialize_cama(c) for c in camas]
+
+@router.get("/camas/{id_cama}", summary="Obtener cama por ID")
+def obtener_cama(id_cama: int, db: Session = Depends(get_db)):
+    c = db.query(Cama).filter(Cama.id_cama == id_cama).first()
+    if not c:
         raise HTTPException(status_code=404, detail="Cama no encontrada")
-    if not any(area.id_area == solicitud.id_area for area in areas_db):
+    return serialize_cama(c)
+
+@router.get("/camas/by-qr/{qr}", summary="Obtener cama por identificador QR")
+def obtener_cama_por_qr(qr: str, db: Session = Depends(get_db)):
+    c = db.query(Cama).filter(Cama.identificador_qr == qr).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Cama no encontrada para ese QR")
+    return serialize_cama(c)
+
+
+# ======================
+#   ÁREAS
+# ======================
+@router.get("/areas", summary="Listar áreas")
+def obtener_areas(db: Session = Depends(get_db)):
+    areas = db.query(Area).all()
+    return [serialize_area(a) for a in areas]
+
+
+# ======================
+#   SOLICITUDES (tickets)
+# ======================
+
+@router.post("/solicitudes", summary="Crear solicitud")
+def crear_solicitud(
+    id_cama: int,
+    id_area: int,
+    tipo: str,
+    descripcion: str,
+    db: Session = Depends(get_db),
+):
+    # Validaciones de integridad
+    if not db.query(Cama).filter(Cama.id_cama == id_cama).first():
+        raise HTTPException(status_code=404, detail="Cama no encontrada")
+
+    if not db.query(Area).filter(Area.id_area == id_area).first():
         raise HTTPException(status_code=404, detail="Área no encontrada")
 
-    # Agregar una única vez
-    solicitudes_db.append(solicitud)
-    return {"mensaje": "Solicitud creada", "solicitud": solicitud}
+    solicitud = Solicitud(
+        id_cama=id_cama,
+        id_area=id_area,
+        tipo=tipo,
+        descripcion=descripcion,
+        estado_actual=EstadoSolicitud.ABIERTO,
+        fecha_creacion=datetime.utcnow(),
+    )
+    db.add(solicitud)
+    db.commit()
+    db.refresh(solicitud)
+    return {"mensaje": "Solicitud creada", "solicitud": serialize_solicitud(solicitud)}
 
-# Obtener todas las solicitudes
-@router.get("/solicitudes")
-def obtener_solicitudes():
-    return solicitudes_db
 
-# Solicitudes por cama
-@router.get("/solicitudes/cama/{id_cama}")
-def obtener_solicitudes_por_cama(id_cama: int):
-    solicitudes = [sol for sol in solicitudes_db if sol.id_cama == id_cama]
-    if not solicitudes:
-        raise HTTPException(status_code=404, detail="No se encontraron solicitudes para esta cama")
-    return solicitudes
+@router.get("/solicitudes", summary="Listar solicitudes con filtros")
+def obtener_solicitudes(
+    estado: str | None = Query(default=None, description="abierto | en_proceso | resuelto | cancelado"),
+    id_hospital: int | None = Query(default=None),
+    id_habitacion: int | None = Query(default=None),
+    id_cama: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """
+    Filtros opcionales:
+    - estado: 'abierto' | 'en_proceso' | 'resuelto' | 'cancelado'
+    - id_hospital: filtra por hospital (via habitación->cama)
+    - id_habitacion: filtra por habitación
+    - id_cama: filtra por cama
+    """
+    q = db.query(Solicitud)
 
-# Actualizar estado de una solicitud
-@router.put("/solicitudes/{id_solicitud}/estado")
-def actualizar_estado_solicitud(id_solicitud: int, nuevo_estado: str):
-    solicitud = next((sol for sol in solicitudes_db if sol.id_solicitud == id_solicitud), None)
-    if not solicitud:
+    if estado:
+        if estado not in {"abierto", "en_proceso", "resuelto", "cancelado"}:
+            raise HTTPException(status_code=400, detail="Estado inválido")
+        q = q.filter(Solicitud.estado_actual == estado)
+
+    if id_cama:
+        q = q.filter(Solicitud.id_cama == id_cama)
+
+    # Joins para filtrar por habitación/hospital
+    if id_habitacion or id_hospital:
+        q = q.join(Cama, Cama.id_cama == Solicitud.id_cama)
+        if id_habitacion:
+            q = q.filter(Cama.id_habitacion == id_habitacion)
+        if id_hospital:
+            q = q.join(Habitacion, Habitacion.id_habitacion == Cama.id_habitacion)
+            q = q.filter(Habitacion.id_hospital == id_hospital)
+
+    solicitudes = q.all()
+    return [serialize_solicitud(s) for s in solicitudes]
+
+
+@router.get("/solicitudes/{id_solicitud}", summary="Obtener solicitud por ID")
+def obtener_solicitud(id_solicitud: int, db: Session = Depends(get_db)):
+    s = db.query(Solicitud).filter(Solicitud.id_solicitud == id_solicitud).first()
+    if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    
-    if nuevo_estado not in ["pendiente", "en_proceso", "completada", "cancelada"]:
+    return serialize_solicitud(s)
+
+
+@router.put("/solicitudes/{id_solicitud}/estado", summary="Actualizar estado de solicitud")
+def actualizar_estado_solicitud(
+    id_solicitud: int,
+    nuevo_estado: str,
+    db: Session = Depends(get_db),
+):
+    if nuevo_estado not in {"abierto", "en_proceso", "resuelto", "cancelado"}:
         raise HTTPException(status_code=400, detail="Estado inválido")
-    
-    solicitud.estado_actual = nuevo_estado
+
+    s = db.query(Solicitud).filter(Solicitud.id_solicitud == id_solicitud).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    s.estado_actual = nuevo_estado
+    now = datetime.utcnow()
     if nuevo_estado == "en_proceso":
-        solicitud.fecha_en_proceso = datetime.now()
-    elif nuevo_estado == "completada":
-        solicitud.fecha_resuelta = datetime.now()
-    elif nuevo_estado == "cancelada":
-        solicitud.fecha_cancelada = datetime.now()
-    
-    return {"mensaje": "Estado actualizado", "solicitud": solicitud}
+        s.fecha_en_proceso = now
+    elif nuevo_estado == "resuelto":
+        s.fecha_resuelta = now
+    elif nuevo_estado == "cancelado":
+        s.fecha_cancelada = now
+
+    db.commit()
+    db.refresh(s)
+    return {"mensaje": "Estado actualizado", "solicitud": serialize_solicitud(s)}
