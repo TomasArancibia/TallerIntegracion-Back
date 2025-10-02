@@ -47,7 +47,7 @@ def seed_data(db: Session):
         area=area1,
         tipo="Reparación",
         descripcion="La luz de la habitación no funciona",
-        estado_actual=EstadoSolicitud.ABIERTO,
+        estado_actual=EstadoSolicitud.PENDIENTE,
         fecha_creacion=datetime.utcnow(),
     )
     db.add(solicitud)

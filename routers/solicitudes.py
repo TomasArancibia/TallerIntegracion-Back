@@ -56,11 +56,11 @@ def serialize_solicitud(s: Solicitud):
         "identificador_qr": s.identificador_qr,
         "tipo": s.tipo,
         "descripcion": s.descripcion,
-        "estado": s.estado_actual,
-        "fecha_creacion": s.fecha_creacion,
-        "fecha_en_proceso": s.fecha_en_proceso,
-        "fecha_resuelta": s.fecha_resuelta,
-        "fecha_cancelada": s.fecha_cancelada,
+        "estado": (s.estado_actual.value 
+                if hasattr(s.estado_actual, "value") else s.estado_actual),
+        "fecha_creacion": s.fecha_creacion.isoformat() if s.fecha_creacion else None,
+        "fecha_actualizacion": s.fecha_actualizacion.isoformat() if s.fecha_actualizacion else None,
+        "fecha_cierre": s.fecha_cierre.isoformat() if s.fecha_cierre else None,
     }
 
 
@@ -145,46 +145,37 @@ def obtener_areas(db: Session = Depends(get_db)):
 
 @router.post("/solicitudes")
 def crear_solicitud(payload: SolicitudIn, db: Session = Depends(get_db)):
-    # Validar cama por id
     cama = db.query(Cama).filter(Cama.id_cama == payload.id_cama).first()
     if not cama:
         raise HTTPException(status_code=404, detail="Cama no encontrada")
 
-    # Resolver área por id o por nombre (case-insensitive)
     area = None
     if payload.id_area:
         area = db.query(Area).filter(Area.id_area == payload.id_area).first()
     elif payload.area_nombre:
         area = db.query(Area).filter(Area.nombre.ilike(payload.area_nombre)).first()
-
     if not area:
         raise HTTPException(status_code=404, detail="Área no encontrada")
 
-    # Crear solicitud
+    now = datetime.utcnow()
+
     solicitud = Solicitud(
         id_cama=payload.id_cama,
         id_area=area.id_area,
         identificador_qr=cama.identificador_qr,
         tipo=payload.tipo,
         descripcion=payload.descripcion,
-        estado_actual=EstadoSolicitud.ABIERTO,
-        fecha_creacion=datetime.utcnow(),
+        estado_actual=EstadoSolicitud.PENDIENTE,   # 👈 miembro del Enum (se serializa a "pendiente")
+        fecha_creacion=now,
+        fecha_actualizacion=now,
+        # fecha_cierre = None
     )
     db.add(solicitud)
     db.commit()
     db.refresh(solicitud)
 
-    return {
-        "mensaje": "Solicitud creada",
-        "solicitud": {
-            "id": solicitud.id_solicitud,
-            "cama": solicitud.id_cama,
-            "identificador_qr": solicitud.identificador_qr,
-            "area": area.nombre,
-            "estado": solicitud.estado_actual,
-            "descripcion": solicitud.descripcion,
-        },
-    }
+    return {"mensaje": "Solicitud creada", "solicitud": serialize_solicitud(solicitud)}
+
 
 
 @router.get("/solicitudes", summary="Listar solicitudes con filtros")
@@ -195,19 +186,14 @@ def obtener_solicitudes(
     id_cama: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """
-    Filtros opcionales:
-    - estado: 'abierto' | 'en_proceso' | 'resuelto' | 'cancelado'
-    - id_hospital: filtra por hospital (via habitación->cama)
-    - id_habitacion: filtra por habitación
-    - id_cama: filtra por cama
-    """
     q = db.query(Solicitud)
 
     if estado:
-        if estado not in {"abierto", "en_proceso", "resuelto", "cancelado"}:
+        estado_norm = estado.strip().lower()
+        valid = {"pendiente", "en_proceso", "resuelto", "cancelado"}
+        if estado_norm not in valid:
             raise HTTPException(status_code=400, detail="Estado inválido")
-        q = q.filter(Solicitud.estado_actual == estado)
+        q = q.filter(Solicitud.estado_actual == getattr(EstadoSolicitud, estado_norm.upper()))
 
     if id_cama:
         q = q.filter(Solicitud.id_cama == id_cama)
@@ -239,22 +225,30 @@ def actualizar_estado_solicitud(
     nuevo_estado: str,
     db: Session = Depends(get_db),
 ):
-    if nuevo_estado not in {"abierto", "en_proceso", "resuelto", "cancelado"}:
+    nuevo_estado_norm = (nuevo_estado or "").strip().lower()
+    valid = {"pendiente", "en_proceso", "resuelto", "cancelado"}
+    if nuevo_estado_norm not in valid:
         raise HTTPException(status_code=400, detail="Estado inválido")
 
     s = db.query(Solicitud).filter(Solicitud.id_solicitud == id_solicitud).first()
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
 
-    s.estado_actual = nuevo_estado
-    now = datetime.utcnow()
-    if nuevo_estado == "en_proceso":
-        s.fecha_en_proceso = now
-    elif nuevo_estado == "resuelto":
-        s.fecha_resuelta = now
-    elif nuevo_estado == "cancelado":
-        s.fecha_cancelada = now
+    # Miembro destino del Enum (PENDIENTE / EN_PROCESO / RESUELTO / CANCELADO)
+    nuevo = getattr(EstadoSolicitud, nuevo_estado_norm.upper())
 
-    db.commit()
-    db.refresh(s)
+    now = datetime.utcnow()
+
+    # Solo tocar si realmente cambia
+    if s.estado_actual != nuevo:
+        s.estado_actual = nuevo                        # 👈 miembro (se guarda su value minúscula)
+        s.fecha_actualizacion = now
+        if nuevo in (EstadoSolicitud.RESUELTO, EstadoSolicitud.CANCELADO):
+            s.fecha_cierre = now
+        else:
+            s.fecha_cierre = None
+
+        db.commit()
+        db.refresh(s)
+
     return {"mensaje": "Estado actualizado", "solicitud": serialize_solicitud(s)}
