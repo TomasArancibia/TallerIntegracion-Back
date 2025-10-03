@@ -116,3 +116,12 @@ GET /solicitudes/{id} → obtener solicitud por ID
 
 PUT /solicitudes/{id}/estado → actualizar estado
 ```
+
+## Para probar desde un qr válido desde el front:
+```
+http://localhost:5173/landing?qr=H1-101-A
+```
+Inválido:
+```
+http://localhost:5173/landing?qr=H1-101-B
+```
