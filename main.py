@@ -9,14 +9,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-ALLOWED_ORIGINS = [
-    os.getenv("FRONTEND_BASE_URL", "http://localhost:5173"),
-    "http://localhost:5173",
+origins = [
+    "https://ucchristusinformacionqr.netlify.app/", 
+    "http://localhost",
+    "http://127.0.0.1",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=origins,
+    allow_origin_regex=r"http://localhost:\d+",  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,7 +26,7 @@ app.add_middleware(
 
 # Incluir routers
 app.include_router(solicitudes.router)
-app.include_router(qr.router)  # 👈 aquí lo agregamos
+app.include_router(qr.router)
 
 @app.get("/")
 def correr_back():
