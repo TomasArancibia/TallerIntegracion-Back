@@ -9,17 +9,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-origins = [
-    "https://ucchristusinformacionqr.netlify.app/", 
-    "http://localhost",
-    "http://127.0.0.1",
-]
-
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex=r"http://localhost:\d+",  
+    allow_origins=[
+        "https://ucchristusinformacionqr.netlify.app",  
+        "http://localhost",
+        "http://127.0.0.1"
+    ],
+    allow_origin_regex=r"http://localhost:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,3 +29,7 @@ app.include_router(qr.router)
 @app.get("/")
 def correr_back():
     return {"mensaje": "Hola, mundo!"}
+
+@app.get("/areas")
+def get_areas():
+    return {"message": "ok"}
