@@ -12,7 +12,9 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     os.getenv("FRONTEND_BASE_URL", "http://localhost:5173"),
     "http://localhost:5173",
+    "https://ucchristusinformacionqr.netlify.app",
 ]
+
 
 app.add_middleware(
     CORSMiddleware,
