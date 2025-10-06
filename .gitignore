@@ -1,4 +1,5 @@
 # Entorno virtual
+.venv/
 venv/
 
 # Caché de Python
