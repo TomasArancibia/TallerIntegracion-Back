@@ -28,7 +28,7 @@ app.include_router(qr.router)
 
 @app.get("/")
 def correr_back():
-    return {"mensaje": "Hola, mundo!"}
+    return {"mensaje": "Hola, mundo!. Cambio el back"}
 
 @app.get("/areas")
 def get_areas():
