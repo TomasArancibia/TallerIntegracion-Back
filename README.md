@@ -78,7 +78,7 @@ alembic upgrade head
 
 Para poblar la DB con datos de ejemplo (hospital, habitaciones, camas, áreas, solicitudes):
 
-python seed.py
+python seed_full.py
 
 ## 📌 Endpoints principales
 
