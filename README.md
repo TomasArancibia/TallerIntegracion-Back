@@ -125,3 +125,13 @@ Inválido:
 ```
 http://localhost:5173/landing?qr=H1-101-B
 ```
+
+## URL BACKEND EN PRODUCCIÓN
+```
+https://tallerintegracion-back.onrender.com/
+```
+
+## URL FRONTEND EN PRODUCCIÓN
+```
+https://tallerint-front.vercel.app
+```
