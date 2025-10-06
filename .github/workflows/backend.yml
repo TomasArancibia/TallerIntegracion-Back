@@ -2,17 +2,19 @@ name: Backend CI/CD
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main ]        # Solo se ejecuta en pushes a main
   pull_request:
-    branches: [ main ]
+    branches: [ main ]        # También corre tests en PRs a main
 
 jobs:
   test-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,8 +26,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-
       - name: Deploy to Render
         if: github.ref == 'refs/heads/main'
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+          echo "🚀 Triggering deploy to Render..."
+          response=$(curl -s -o response.json -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK")
+          echo "Render response code: $response"
+          cat response.json
+          if [ "$response" -ne 200 ]; then
+            echo "❌ Deploy failed. See above response."
+            exit 1
+          fi
+          echo "✅ Deploy triggered successfully!"
