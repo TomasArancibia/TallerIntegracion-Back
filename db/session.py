@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 from dotenv import load_dotenv
 
-# Cargar variables desde .env
+# Cargar variables desde .env (aunque en Render se inyectan directo)
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -11,9 +11,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # Crear motor de conexión
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"sslmode": "require"},  # fuerza SSL
-    pool_pre_ping=True,                   # evita conexiones muertas
-    pool_size=3,                          # límites modestos para free tier
+    pool_pre_ping=True,   # evita usar conexiones muertas
+    pool_size=3,          # límites modestos para free tier
     max_overflow=0,
 )
 
