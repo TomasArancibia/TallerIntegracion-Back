@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from db.session import SessionLocal
 from models.models import Hospital, Habitacion, Cama, Area, Solicitud, EstadoSolicitud
 from datetime import datetime
@@ -83,6 +84,11 @@ def obtener_hospital(id_hospital: int, db: Session = Depends(get_db)):
 # ======================
 #   HABITACIONES
 # ======================
+@router.get("/habitaciones", summary="Listar habitaciones de todos los hospitales")
+def obtener_habitaciones(db: Session = Depends(get_db)):
+    habitaciones = db.query(Habitacion).all()
+    return [serialize_habitacion(h) for h in habitaciones]
+
 @router.get("/hospitales/{id_hospital}/habitaciones", summary="Listar habitaciones por hospital")
 def obtener_habitaciones_por_hospital(id_hospital: int, db: Session = Depends(get_db)):
     # Verifica existencia del hospital para mensajes más claros
@@ -106,6 +112,11 @@ def obtener_habitacion(id_habitacion: int, db: Session = Depends(get_db)):
 # ======================
 #   CAMAS
 # ======================
+@router.get("/camas", summary="Listar todas las camas de todas las habitaciones y hospitales")
+def obtener_camas(db: Session = Depends(get_db)):
+    camas = db.query(Cama).all()
+    return [serialize_cama(c) for c in camas]
+
 @router.get("/habitaciones/{id_habitacion}/camas", summary="Listar camas por habitación")
 def obtener_camas_por_habitacion(id_habitacion: int, db: Session = Depends(get_db)):
     # Verifica existencia de la habitación
@@ -252,3 +263,296 @@ def actualizar_estado_solicitud(
         db.refresh(s)
 
     return {"mensaje": "Estado actualizado", "solicitud": serialize_solicitud(s)}
+
+# ==================================================================================================
+#                                             MÉTRICAS
+# ==================================================================================================
+
+# Total Solicitudes por rango de fechas
+@router.get("/metricas/solicitudes-por-fecha", summary="Métricas: solicitudes creadas en rango de fechas")
+def metricas_solicitudes_por_fecha(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    count = db.query(Solicitud).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin
+    ).count()
+
+    return {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "total_solicitudes": count}
+
+# Total Solicitudes por area por rango de fechas
+@router.get("/metricas/solicitudes-por-area", summary="Métricas: solicitudes por área en rango de fechas")
+def metricas_solicitudes_por_area(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        Solicitud.id_area,
+        Area.nombre,
+        func.count(Solicitud.id_solicitud)
+    ).join(Area, Solicitud.id_area == Area.id_area).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin
+    ).group_by(Solicitud.id_area, Area.nombre).all()
+
+    metricas = []
+    for id_area, nombre_area, total in resultados:
+        metricas.append({
+            "nombre_area": nombre_area,
+            "total_solicitudes": total
+        })
+
+    return {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "metricas": metricas}
+
+# Total Solicitudes por hospital y estado por rango de fechas
+@router.get("/metricas/solicitudes-por-hospital-estado", summary="Métricas: solicitudes por hospital y estado en rango de fechas")
+def metricas_solicitudes_por_hospital_estado(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        Hospital.id_hospital,
+        Hospital.nombre,
+        Solicitud.estado_actual,
+        func.count(Solicitud.id_solicitud)
+    ).join(Cama, Solicitud.id_cama == Cama.id_cama
+    ).join(Habitacion, Cama.id_habitacion == Habitacion.id_habitacion
+    ).join(Hospital, Habitacion.id_hospital == Hospital.id_hospital
+    ).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin
+    ).group_by(Hospital.id_hospital, Hospital.nombre, Solicitud.estado_actual).all()
+
+    metricas = []
+    for id_hospital, nombre_hospital, estado, total in resultados:
+        metricas.append({
+            "nombre_hospital": nombre_hospital,
+            "estado": estado.value if hasattr(estado, "value") else estado,
+            "total_solicitudes": total
+        })
+
+    return {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "metricas": metricas}
+
+
+# Total Solicitudes por area y estado por rango de fechas
+@router.get("/metricas/solicitudes-por-area-estado", summary="Métricas: solicitudes por área y estado en rango de fechas")
+def metricas_solicitudes_por_area_estado(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        Solicitud.id_area,
+        Area.nombre,
+        Solicitud.estado_actual,
+        func.count(Solicitud.id_solicitud)
+    ).join(Area, Solicitud.id_area == Area.id_area).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin
+    ).group_by(Solicitud.id_area, Area.nombre, Solicitud.estado_actual).all()
+
+    metricas = []
+    for id_area, nombre_area, estado, total in resultados:
+        metricas.append({
+            "nombre_area": nombre_area,
+            "estado": estado.value if hasattr(estado, "value") else estado,
+            "total_solicitudes": total
+        })
+
+    return {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "metricas": metricas}
+
+# Total Solicitudes por hospital y area por rango de fechas
+@router.get("/metricas/solicitudes-por-hospital-area", summary="Métricas: solicitudes por hospital y área en rango de fechas")
+def metricas_solicitudes_por_hospital_area(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        Hospital.id_hospital,
+        Hospital.nombre,
+        Solicitud.id_area,
+        Area.nombre,
+        func.count(Solicitud.id_solicitud)
+    ).join(Cama, Solicitud.id_cama == Cama.id_cama
+    ).join(Habitacion, Cama.id_habitacion == Habitacion.id_habitacion
+    ).join(Hospital, Habitacion.id_hospital == Hospital.id_hospital
+    ).join(Area, Solicitud.id_area == Area.id_area
+    ).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin
+    ).group_by(Hospital.id_hospital, Hospital.nombre, Solicitud.id_area, Area.nombre).all()
+
+    metricas = []
+    for id_hospital, nombre_hospital, id_area, nombre_area, total in resultados:
+        metricas.append({
+            "nombre_hospital": nombre_hospital,
+            "nombre_area": nombre_area,
+            "total_solicitudes": total
+        })
+
+    return {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "metricas": metricas}
+
+# Total Solicitudes por area por dia en rango de fechas
+@router.get("/metricas/solicitudes-por-area-dia", summary="Métricas: solicitudes por área por día en rango de fechas")
+def metricas_solicitudes_por_area_dia(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        Solicitud.id_area,
+        Area.nombre,
+        func.date(Solicitud.fecha_creacion),
+        func.count(Solicitud.id_solicitud)
+    ).join(Area, Solicitud.id_area == Area.id_area).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin
+    ).group_by(Solicitud.id_area, Area.nombre, func.date(Solicitud.fecha_creacion)).all()
+
+    metricas = []
+    for id_area, nombre_area, dia, total in resultados:
+        metricas.append({
+            "nombre_area": nombre_area,
+            "dia": dia.isoformat() if hasattr(dia, "isoformat") else str(dia),
+            "total_solicitudes": total
+        })
+
+    return {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin, "metricas": metricas}
+
+# Tiempo promedio de resolución de solicitudes
+@router.get("/metricas/tiempo-promedio-resolucion", summary="Métricas: tiempo promedio de resolución de solicitudes")
+def metricas_tiempo_promedio_resolucion(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        func.avg(func.extract("epoch",(Solicitud.fecha_cierre - Solicitud.fecha_creacion)))
+    ).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin,
+        Solicitud.estado_actual.in_([EstadoSolicitud.RESUELTO, EstadoSolicitud.CANCELADO])
+    ).scalar()
+
+    promedio_minutos = (resultados or 0) / 60  # pasa segundos a minutos
+    promedio_horas = (resultados or 0) / 3600  # pasa segundos a horas
+    promedio_dias = promedio_horas / 24
+
+    return {
+        "fecha_inicio": fecha_inicio,
+        "fecha_fin": fecha_fin,
+        "tiempo_promedio_resolucion_horas": round(promedio_horas, 2)
+    }
+
+# Tiempo promedio de resolución por área
+@router.get("/metricas/tiempo-promedio-resolucion-por-area", summary="Métricas: tiempo promedio de resolución por área")
+def metricas_tiempo_promedio_resolucion_por_area(
+    fecha_inicio: str = Query(..., description="Fecha inicio en formato YYYY-MM-DD"),
+    fecha_fin: str = Query(..., description="Fecha fin en formato YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+
+    if inicio > fin:
+        raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
+
+    resultados = db.query(
+        Solicitud.id_area,
+        Area.nombre,
+        func.avg(
+            func.extract("epoch", (Solicitud.fecha_cierre - Solicitud.fecha_creacion))
+        )
+    ).join(Area, Solicitud.id_area == Area.id_area).filter(
+        Solicitud.fecha_creacion >= inicio,
+        Solicitud.fecha_creacion <= fin,
+        Solicitud.estado_actual.in_([EstadoSolicitud.RESUELTO, EstadoSolicitud.CANCELADO])
+    ).group_by(Solicitud.id_area, Area.nombre).all()
+
+    metricas = []
+    for id_area, nombre_area, promedio_segundos in resultados:
+        promedio_minutos = (promedio_segundos or 0) / 60
+        promedio_horas = (promedio_segundos or 0) / 3600
+        promedio_dias = promedio_horas / 24
+
+        metricas.append({
+            "nombre_area": nombre_area,
+            "tiempo_promedio_resolucion_horas": round(promedio_horas, 2),
+        })
+
+    return {
+        "fecha_inicio": fecha_inicio,
+        "fecha_fin": fecha_fin,
+        "metricas": metricas
+    }
