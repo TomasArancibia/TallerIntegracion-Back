@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from routers import solicitudes
 from routers import qr 
+from routers import admin
 from fastapi.middleware.cors import CORSMiddleware
 import os
 
@@ -31,11 +32,8 @@ app.add_middleware(
 # Incluir routers
 app.include_router(solicitudes.router)
 app.include_router(qr.router)
+app.include_router(admin.router)
 
 @app.get("/")
 def correr_back():
     return {"mensaje": "Hola, mundo!. Cambio el back"}
-
-@app.get("/areas")
-def get_areas():
-    return {"message": "ok"}
