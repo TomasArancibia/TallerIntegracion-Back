@@ -118,7 +118,7 @@ class Cama(Base):
 class Usuario(Base):
     __tablename__ = "usuario"
 
-    id = Column(UUID(as_uuid=True), ForeignKey("auth.users.id"), primary_key=True)
+    id = Column(UUID(as_uuid=True), primary_key=True)
     rol = Column(
         SAEnum(
             RolUsuario,

@@ -56,7 +56,7 @@ CREATE TABLE cama (
 
 -- Perfil de usuario vinculado a Supabase Auth (auth.users.id)
 CREATE TABLE usuario (
-    id             UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id             UUID PRIMARY KEY,
     rol            rol_usuario NOT NULL,
     correo         VARCHAR(160) NOT NULL UNIQUE,
     nombre         VARCHAR(80) NOT NULL,

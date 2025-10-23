@@ -125,6 +125,10 @@ Inválido:
 ```
 http://localhost:5173/landing?qr=H1-101-B
 ```
+## Para hacer login
+```
+http://localhost:5173/admin.html#/login
+```
 
 ## URL BACKEND EN PRODUCCIÓN
 ```

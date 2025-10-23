@@ -1,34 +1,19 @@
 from datetime import datetime
+import secrets
+import string
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from auth.dependencies import require_authenticated_user
+from auth.dependencies import require_admin, require_authenticated_user
 from db.session import SessionLocal
-from models.models import (
-    Area,
-    Cama,
-    Edificio,
-    Habitacion,
-    Institucion,
-    Piso,
-    RolUsuario,
-    Servicio,
-    Solicitud,
-    Usuario,
-)
-from routers.solicitudes import (
-    serialize_area,
-    serialize_cama,
-    serialize_edificio,
-    serialize_habitacion,
-    serialize_institucion,
-    serialize_piso,
-    serialize_servicio,
-    serialize_solicitud,
-)
+from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario
+from pydantic import BaseModel, EmailStr
+from routers.solicitudes import serialize_area, serialize_cama, serialize_edificio, serialize_habitacion, serialize_institucion, serialize_piso, serialize_servicio, serialize_solicitud
+from services.supabase_admin import SupabaseAdminError, create_auth_user, delete_auth_user, update_auth_user
 
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -51,6 +36,8 @@ def serialize_usuario(usuario: Usuario) -> dict:
         "apellido": usuario.apellido,
         "telefono": usuario.telefono,
         "id_area": usuario.id_area,
+        "area_nombre": usuario.area.nombre_area if usuario.area else None,
+        "activo": usuario.activo,
     }
 
 
@@ -196,3 +183,223 @@ def admin_metricas(
         "por_hospital_estado": metricas_hospital_estado_res,
         "por_area_dia": metricas_area_dia_res,
     }
+
+
+class UsuarioCreateRequest(BaseModel):
+    email: EmailStr
+    id_area: int
+
+
+class ProfileUpdateRequest(BaseModel):
+    nombre: Optional[str] = None
+    apellido: Optional[str] = None
+    telefono: Optional[str] = None
+    new_password: Optional[str] = None
+
+
+class UsuarioAdminUpdateRequest(BaseModel):
+    id_area: Optional[int] = None
+    activo: Optional[bool] = None
+
+
+@router.get("/users", summary="Listar jefes de área")
+def admin_list_users(
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    usuarios = (
+        db.query(Usuario)
+        .filter(Usuario.rol == RolUsuario.JEFE_AREA)
+        .order_by(Usuario.correo)
+        .all()
+    )
+    return {"usuarios": [serialize_usuario(u) for u in usuarios]}
+
+
+def _generate_temp_password(email: str) -> str:
+    suffix = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
+    prefix = email.split("@", 1)[0][:8] or "user"
+    return f"{prefix}-{suffix}"
+
+
+@router.post(
+    "/users",
+    summary="Crear jefe de área",
+    status_code=status.HTTP_201_CREATED,
+)
+def admin_create_user(
+    payload: UsuarioCreateRequest,
+    admin: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    del admin  # unused, pero asegura que es admin
+
+    area = db.query(Area).filter(Area.id_area == payload.id_area).first()
+    if not area:
+        raise HTTPException(status_code=404, detail="Área no encontrada")
+
+    existing = db.query(Usuario).filter(Usuario.correo == payload.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Ya existe un usuario con ese correo")
+
+    temp_password = _generate_temp_password(payload.email)
+
+    try:
+        supabase_response = create_auth_user(payload.email, temp_password)
+    except SupabaseAdminError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    user_data = supabase_response.get("user") or supabase_response
+    user_id = user_data.get("id")
+    if not user_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase no devolvió un ID de usuario válido",
+        )
+
+    try:
+        nuevo_usuario = Usuario(
+            id=uuid.UUID(user_id),
+            rol=RolUsuario.JEFE_AREA,
+            correo=payload.email,
+            nombre="Pendiente",
+            apellido="Pendiente",
+            telefono=None,
+            id_area=area.id_area,
+            activo=True,
+        )
+        db.add(nuevo_usuario)
+        db.commit()
+        db.refresh(nuevo_usuario)
+    except Exception:
+        db.rollback()
+        # Si falló guardar en nuestra BD, intentamos revertir en Supabase
+        try:
+            delete_auth_user(user_id)
+        except SupabaseAdminError:
+            pass
+        raise
+
+    return {
+        "usuario": serialize_usuario(nuevo_usuario),
+        "temp_password": temp_password,
+    }
+
+
+@router.put("/me", summary="Actualizar perfil propio")
+def admin_update_profile(
+    payload: ProfileUpdateRequest,
+    usuario: Usuario = Depends(require_authenticated_user),
+    db: Session = Depends(get_db),
+):
+    usuario_db = db.query(Usuario).filter(Usuario.id == usuario.id).first()
+    if not usuario_db:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    updated = False
+
+    if payload.nombre is not None:
+        usuario_db.nombre = payload.nombre.strip() or usuario_db.nombre
+        updated = True
+
+    if payload.apellido is not None:
+        usuario_db.apellido = payload.apellido.strip() or usuario_db.apellido
+        updated = True
+
+    if payload.telefono is not None:
+        usuario_db.telefono = payload.telefono.strip() or None
+        updated = True
+
+    if updated:
+        db.add(usuario_db)
+        db.commit()
+        db.refresh(usuario_db)
+
+    if payload.new_password:
+        try:
+            update_auth_user(str(usuario.id), password=payload.new_password)
+        except SupabaseAdminError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"usuario": serialize_usuario(usuario_db)}
+
+
+@router.delete(
+    "/users/{user_id}",
+    summary="Eliminar jefe de área",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def admin_delete_user(
+    user_id: str,
+    admin: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    del admin  # solo para forzar autenticación
+
+    try:
+        uuid_user = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ID de usuario inválido")
+
+    usuario = db.query(Usuario).filter(Usuario.id == uuid_user).first()
+    if not usuario:
+        # Si no existe localmente, intentamos eliminar en Supabase igualmente
+        try:
+            delete_auth_user(user_id)
+        except SupabaseAdminError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return
+
+    if usuario.rol != RolUsuario.JEFE_AREA:
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar usuarios de tipo JEFE_AREA")
+
+    # Intentamos eliminar primero en Supabase
+    try:
+        delete_auth_user(user_id)
+    except SupabaseAdminError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db.delete(usuario)
+    db.commit()
+
+    return
+
+
+@router.patch(
+    "/users/{user_id}",
+    summary="Actualizar jefe de área",
+)
+def admin_patch_user(
+    user_id: str,
+    payload: UsuarioAdminUpdateRequest,
+    admin: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    del admin
+
+    try:
+        uuid_user = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ID de usuario inválido")
+
+    usuario = db.query(Usuario).filter(Usuario.id == uuid_user).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if usuario.rol != RolUsuario.JEFE_AREA:
+        raise HTTPException(status_code=400, detail="Solo se pueden modificar usuarios de tipo JEFE_AREA")
+
+    if payload.id_area is not None:
+        area = db.query(Area).filter(Area.id_area == payload.id_area).first()
+        if not area:
+            raise HTTPException(status_code=404, detail="Área no encontrada")
+        usuario.id_area = area.id_area
+
+    if payload.activo is not None:
+        usuario.activo = payload.activo
+
+    db.add(usuario)
+    db.commit()
+    db.refresh(usuario)
+
+    return {"usuario": serialize_usuario(usuario)}
