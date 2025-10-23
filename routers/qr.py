@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from db.session import SessionLocal
-from models.models import Cama, Habitacion, Hospital
+from models.models import Cama, Habitacion, Piso, Edificio, Institucion
 from pydantic import BaseModel
 from typing import Optional, List
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -55,16 +55,27 @@ def validate_qr(code: str, db: Session = Depends(get_db)):
         return QRContext(ok=False, code=code, reason="inactive")
 
     hab = db.query(Habitacion).filter(Habitacion.id_habitacion == cama.id_habitacion).first()
-    hosp = db.query(Hospital).filter(Hospital.id_hospital == hab.id_hospital).first() if hab else None
+
+    inst = None
+    if hab:
+        piso = db.query(Piso).filter(Piso.id_piso == hab.id_piso).first()
+        if piso:
+            edificio = db.query(Edificio).filter(Edificio.id_edificio == piso.id_edificio).first()
+            if edificio:
+                inst = (
+                    db.query(Institucion)
+                    .filter(Institucion.id_institucion == edificio.id_institucion)
+                    .first()
+                )
 
     return QRContext(
         ok=True,
         code=code,
         id_cama=cama.id_cama,
         id_habitacion=hab.id_habitacion if hab else None,
-        id_hospital=hosp.id_hospital if hosp else None,
-        hospital=hosp.nombre if hosp else None,
-        habitacion=hab.numero if hab else None,
+        id_hospital=inst.id_institucion if inst else None,
+        hospital=inst.nombre_institucion if inst else None,
+        habitacion=hab.nombre_habitacion if hab else None,
     )
 
 # ================ Redirect (opcional, práctico para imprimir) ================
