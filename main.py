@@ -4,6 +4,9 @@ from routers import qr
 from routers import admin
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(
     title="UC Christus API - Gestión de Solicitudes",
@@ -19,7 +22,8 @@ ALLOWED_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://ucchristusinformacionqr.netlify.app",  
+        "https://ucchristusinformacionqr.netlify.app",
+        "https://tallerint-front.vercel.app",
         "http://localhost",
         "http://127.0.0.1"
     ],
@@ -33,6 +37,8 @@ app.add_middleware(
 app.include_router(solicitudes.router)
 app.include_router(qr.router)
 app.include_router(admin.router)
+from routers.chat import router as chat_router
+app.include_router(chat_router)
 
 @app.get("/")
 def correr_back():
