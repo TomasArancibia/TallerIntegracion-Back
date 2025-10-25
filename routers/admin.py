@@ -403,3 +403,89 @@ def admin_patch_user(
     db.refresh(usuario)
 
     return {"usuario": serialize_usuario(usuario)}
+
+
+class HabitacionCreateRequest(BaseModel):
+    nombre: str
+    id_piso: int
+    id_servicio: int
+
+
+class CamaCreateRequest(BaseModel):
+    id_habitacion: int
+    letra: str
+    identificador_qr: Optional[str] = None
+
+
+@router.post("/habitaciones", summary="Crear habitación", status_code=status.HTTP_201_CREATED)
+def admin_crear_habitacion(
+    payload: HabitacionCreateRequest,
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    nombre = (payload.nombre or "").strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Nombre de habitación requerido")
+
+    piso = db.query(Piso).filter(Piso.id_piso == payload.id_piso).first()
+    if not piso:
+        raise HTTPException(status_code=404, detail="Piso no encontrado")
+
+    servicio = db.query(Servicio).filter(Servicio.id_servicio == payload.id_servicio).first()
+    if not servicio:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+
+    existente = (
+        db.query(Habitacion)
+        .filter(Habitacion.id_piso == payload.id_piso, Habitacion.nombre_habitacion == nombre)
+        .first()
+    )
+    if existente:
+        raise HTTPException(status_code=400, detail="Ya existe una habitación con ese nombre en el piso indicado")
+
+    hab = Habitacion(nombre_habitacion=nombre, id_piso=piso.id_piso, id_servicio=servicio.id_servicio)
+    db.add(hab)
+    db.commit()
+    db.refresh(hab)
+    return {"habitacion": serialize_habitacion(hab)}
+
+
+@router.post("/camas", summary="Crear cama", status_code=status.HTTP_201_CREATED)
+def admin_crear_cama(
+    payload: CamaCreateRequest,
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    letra = (payload.letra or "").strip().upper()
+    if not letra:
+        raise HTTPException(status_code=400, detail="Letra de cama requerida")
+
+    hab = db.query(Habitacion).filter(Habitacion.id_habitacion == payload.id_habitacion).first()
+    if not hab:
+        raise HTTPException(status_code=404, detail="Habitación no encontrada")
+
+    dup = (
+        db.query(Cama)
+        .filter(Cama.id_habitacion == payload.id_habitacion, Cama.letra_cama == letra)
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=400, detail="Ya existe una cama con esa letra en la habitación")
+
+    qr = (payload.identificador_qr or secrets.token_hex(16)).strip()
+
+    # valida unicidad del QR
+    if db.query(Cama).filter(Cama.identificador_qr == qr).first():
+        # si vino desde el cliente, error; si fue generado, intenta regenerar unas veces
+        if payload.identificador_qr:
+            raise HTTPException(status_code=400, detail="El identificador QR ya existe")
+        for _ in range(4):
+            qr = secrets.token_hex(16)
+            if not db.query(Cama).filter(Cama.identificador_qr == qr).first():
+                break
+
+    cama = Cama(id_habitacion=hab.id_habitacion, letra_cama=letra, identificador_qr=qr, activo=True)
+    db.add(cama)
+    db.commit()
+    db.refresh(cama)
+    return {"cama": serialize_cama(cama)}
