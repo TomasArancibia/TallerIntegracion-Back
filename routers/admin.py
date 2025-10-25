@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import secrets
 import string
 import uuid
@@ -97,18 +98,27 @@ def admin_metricas(
     usuario: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
+    # TZ
     try:
-        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
-        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+        tz_cl = ZoneInfo("America/Santiago")
+    except Exception:
+        tz_cl = timezone.utc
+
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d").replace(tzinfo=tz_cl)
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d").replace(tzinfo=tz_cl)
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido (YYYY-MM-DD)")
 
     if inicio > fin:
         raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
 
+    inicio_utc = inicio.astimezone(timezone.utc)
+    fin_utc_exclusive = (fin + timedelta(days=1)).astimezone(timezone.utc)
+
     solicitudes_filtro = db.query(Solicitud).filter(
-        Solicitud.fecha_creacion >= inicio,
-        Solicitud.fecha_creacion <= fin,
+        Solicitud.fecha_creacion >= inicio_utc,
+        Solicitud.fecha_creacion < fin_utc_exclusive,
     )
 
     if usuario.rol == RolUsuario.JEFE_AREA:
@@ -162,10 +172,10 @@ def admin_metricas(
         solicitudes_filtro.join(Area, Area.id_area == Solicitud.id_area)
         .with_entities(
             Area.nombre_area,
-            func.date(Solicitud.fecha_creacion),
+            func.date(func.timezone('America/Santiago', Solicitud.fecha_creacion)),
             func.count(Solicitud.id_solicitud),
         )
-        .group_by(Area.nombre_area, func.date(Solicitud.fecha_creacion))
+        .group_by(Area.nombre_area, func.date(func.timezone('America/Santiago', Solicitud.fecha_creacion)))
         .all()
     )
 
