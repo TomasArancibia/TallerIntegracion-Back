@@ -426,6 +426,9 @@ class CamaCreateRequest(BaseModel):
     letra: str
     identificador_qr: Optional[str] = None
 
+class CamaUpdateRequest(BaseModel):
+    activo: Optional[bool] = None
+
 
 @router.post("/habitaciones", summary="Crear habitación", status_code=status.HTTP_201_CREATED)
 def admin_crear_habitacion(
@@ -498,4 +501,28 @@ def admin_crear_cama(
     db.add(cama)
     db.commit()
     db.refresh(cama)
+    return {"cama": serialize_cama(cama)}
+
+
+@router.patch("/camas/{id_cama}", summary="Actualizar cama")
+def admin_patch_cama(
+    id_cama: int,
+    payload: CamaUpdateRequest,
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    cama = db.query(Cama).filter(Cama.id_cama == id_cama).first()
+    if not cama:
+        raise HTTPException(status_code=404, detail="Cama no encontrada")
+
+    updated = False
+    if payload.activo is not None:
+        cama.activo = bool(payload.activo)
+        updated = True
+
+    if updated:
+        db.add(cama)
+        db.commit()
+        db.refresh(cama)
+
     return {"cama": serialize_cama(cama)}
