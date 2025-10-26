@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from auth.dependencies import require_admin, require_authenticated_user
 from db.session import SessionLocal
-from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario
+from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario, EstadoSolicitud
 from pydantic import BaseModel, EmailStr
 from routers.solicitudes import serialize_area, serialize_cama, serialize_edificio, serialize_habitacion, serialize_institucion, serialize_piso, serialize_servicio, serialize_solicitud
 from services.supabase_admin import SupabaseAdminError, create_auth_user, delete_auth_user, update_auth_user
@@ -188,10 +188,52 @@ def admin_metricas(
         for nombre_area, dia, total in metricas_area_dia_query
     ]
 
+    # Promedio de resolución (solo cerradas)
+    cerradas_q = solicitudes_filtro.filter(
+        Solicitud.estado_actual == EstadoSolicitud.CERRADA,
+        Solicitud.fecha_creacion.isnot(None),
+        Solicitud.fecha_cierre.isnot(None),
+    )
+
+    prom_area_query = (
+        cerradas_q.join(Area, Area.id_area == Solicitud.id_area)
+        .with_entities(
+            Area.nombre_area,
+            func.avg(func.extract('epoch', Solicitud.fecha_cierre - Solicitud.fecha_creacion)),
+        )
+        .group_by(Area.nombre_area)
+        .all()
+    )
+    promedio_res_area = []
+    for nombre, secs in prom_area_query:
+        secs_float = float(secs) if secs is not None else 0.0
+        promedio_res_area.append({"nombre_area": nombre, "horas": secs_float / 3600.0})
+
+    prom_hosp_query = (
+        cerradas_q
+        .join(Cama, Cama.id_cama == Solicitud.id_cama)
+        .join(Habitacion, Habitacion.id_habitacion == Cama.id_habitacion)
+        .join(Piso, Piso.id_piso == Habitacion.id_piso)
+        .join(Edificio, Edificio.id_edificio == Piso.id_edificio)
+        .join(Institucion, Institucion.id_institucion == Edificio.id_institucion)
+        .with_entities(
+            Institucion.nombre_institucion,
+            func.avg(func.extract('epoch', Solicitud.fecha_cierre - Solicitud.fecha_creacion)),
+        )
+        .group_by(Institucion.nombre_institucion)
+        .all()
+    )
+    promedio_res_hospital = []
+    for nombre, secs in prom_hosp_query:
+        secs_float = float(secs) if secs is not None else 0.0
+        promedio_res_hospital.append({"nombre_hospital": nombre, "horas": secs_float / 3600.0})
+
     return {
         "por_area": metricas_area_res,
         "por_hospital_estado": metricas_hospital_estado_res,
         "por_area_dia": metricas_area_dia_res,
+        "promedio_resolucion_area": promedio_res_area,
+        "promedio_resolucion_hospital": promedio_res_hospital,
     }
 
 
