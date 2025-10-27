@@ -11,6 +11,11 @@ Backend del proyecto de título (**FastAPI + PostgreSQL**).
 python3 -m venv ~/.venvs/tallerint
 source ~/.venvs/tallerint/bin/activate
 ```
+```CMD
+python -m venv ~/.venvs/tallerint
+call "%USERPROFILE%\.venvs\tallerint\Scripts\activate.bat"
+```
+
 ### 2. Instalar dependencias (solo la primera vez)
 ```pip install -r requirements.txt```
 
