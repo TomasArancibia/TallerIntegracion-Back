@@ -17,3 +17,9 @@ __pycache__/
 
 # Archivos de entorno
 .env
+
+# Archivos de testing temporales
+*.db
+test.db
+Test-NetConnection
+*-test.db

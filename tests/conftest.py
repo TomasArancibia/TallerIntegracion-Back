@@ -1,5 +1,5 @@
 """
-Configuración básica de tests - Solo fixtures esenciales
+Configuración de tests - Usa DB real localmente, fallback para CI
 """
 import pytest
 import os
@@ -9,8 +9,24 @@ from fastapi.testclient import TestClient
 # Configurar el path para imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Configurar variables de entorno para testing si no están definidas
+# Cargar variables de entorno del .env si existe (para desarrollo local)
+def load_env_file():
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    if not os.getenv(key):  # Solo si no está ya definida
+                        os.environ[key] = value
+
+# Cargar .env primero
+load_env_file()
+
+# Configurar variables de entorno para CI si no están definidas
 if not os.getenv('DATABASE_URL'):
+    # En CI o sin .env, usar SQLite
     os.environ['DATABASE_URL'] = 'sqlite:///./test.db'
 if not os.getenv('SUPABASE_URL'):
     os.environ['SUPABASE_URL'] = 'https://fake-url.supabase.co'
