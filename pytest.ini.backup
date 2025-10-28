@@ -1,0 +1,34 @@
+[pytest]
+# Configuración de pytest
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+
+# Marcadores personalizados
+markers =
+    slow: marcas tests que son lentos
+    integration: tests de integración
+    unit: tests unitarios
+    api: tests de API endpoints
+
+# Configuración adicional
+addopts = 
+    --strict-markers
+    --strict-config
+    --verbose
+
+# Configuración de logging
+log_cli = true
+log_cli_level = INFO
+log_cli_format = %(asctime)s [%(levelname)8s] %(name)s: %(message)s
+log_cli_date_format = %Y-%m-%d %H:%M:%S
+
+# Filtros de warnings
+filterwarnings =
+    ignore::DeprecationWarning
+    ignore::PendingDeprecationWarning
+
+# Directorio para archivos temporales de test
+tmp_path_retention_count = 3
+tmp_path_retention_policy = failed

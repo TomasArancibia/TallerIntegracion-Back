@@ -8,9 +8,18 @@ venv/
 .venv/
 venv/
 
+~/venv/
+~
+
 # Caché de Python
 __pycache__/
 *.pyc
 
 # Archivos de entorno
 .env
+
+# Archivos de testing temporales
+*.db
+test.db
+Test-NetConnection
+*-test.db
