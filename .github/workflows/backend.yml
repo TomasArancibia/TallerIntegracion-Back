@@ -104,6 +104,13 @@ jobs:
           python -m pytest tests/test_simple.py tests/test_estructura.py tests/test_logica_simple.py tests/test_resumen.py tests/test_endpoints_basicos.py -v --tb=short
           echo "✅ Critical tests passed!"
 
+      - name: Run resilient endpoint tests (additional coverage)
+        run: |
+          echo "🧪 Running resilient endpoint tests..."
+          echo "📊 These tests verify endpoints exist without requiring full database..."
+          python -m pytest tests/test_endpoints_resilientes.py -v --tb=short
+          echo "✅ Resilient tests completed!"
+
       - name: Run all tests (informational)
         continue-on-error: true
         run: |

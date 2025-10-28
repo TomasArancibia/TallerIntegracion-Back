@@ -32,7 +32,7 @@ def client():
 
 @pytest.fixture
 def mock_db():
-    """Mock de base de datos para tests sin dependencias externas."""
+    """Mock básico de base de datos para tests."""
     from unittest.mock import MagicMock
     mock = MagicMock()
     return mock
