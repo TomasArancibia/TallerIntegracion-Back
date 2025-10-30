@@ -2,6 +2,9 @@
 
 Backend del proyecto de título (**FastAPI + PostgreSQL**).
 
+![Backend Tests](https://github.com/TomasArancibia/TallerInt-Front/workflows/Backend%20Tests/badge.svg)
+![Backend CI/CD](https://github.com/TomasArancibia/TallerInt-Front/workflows/Backend%20CI%2FCD/badge.svg)
+
 ---
 
 ## 🚀 Levantar entorno local
@@ -11,6 +14,11 @@ Backend del proyecto de título (**FastAPI + PostgreSQL**).
 python3 -m venv ~/.venvs/tallerint
 source ~/.venvs/tallerint/bin/activate
 ```
+```CMD
+python -m venv ~/.venvs/tallerint
+call "%USERPROFILE%\.venvs\tallerint\Scripts\activate.bat"
+```
+
 ### 2. Instalar dependencias (solo la primera vez)
 ```pip install -r requirements.txt```
 
@@ -129,6 +137,57 @@ http://localhost:5173/landing?qr=H1-101-B
 ```
 http://localhost:5173/admin.html#/login
 ```
+
+## 🚀 CI/CD y Testing Automático
+
+### Tests Automáticos
+
+Este proyecto tiene configurado **GitHub Actions** para ejecutar tests automáticamente:
+
+- ✅ **En cada push** a cualquier branch
+- ✅ **En cada Pull Request**
+- ✅ **Antes de cada deploy** a producción
+
+Los tests se ejecutan en **Python 3.11 y 3.12** para asegurar compatibilidad.
+
+### Ejecutar Tests Localmente
+
+```bash
+# Ejecutar todos los tests
+python -m pytest
+
+# Ejecutar tests con más detalle
+python -m pytest -v
+
+# Ejecutar tests de un archivo específico
+python -m pytest tests/test_endpoints_admin.py -v
+```
+
+### Validación Pre-Commit
+
+Antes de hacer push, puedes ejecutar la validación completa:
+
+**Windows:**
+```cmd
+scripts\pre-commit-check.bat
+```
+
+**Linux/Mac:**
+```bash
+./scripts/pre-commit-check.sh
+```
+
+### Verificar Conexión a Base de Datos
+
+```bash
+python db/test_connection.py
+```
+
+### Estado de CI/CD
+
+Los badges en la parte superior del README muestran el estado actual de:
+- 🧪 **Backend Tests**: Estado de los tests automáticos
+- 🚀 **Backend CI/CD**: Estado del deploy automático
 
 ## URL BACKEND EN PRODUCCIÓN
 ```

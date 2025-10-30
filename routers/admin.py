@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import secrets
 import string
 import uuid
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from auth.dependencies import require_admin, require_authenticated_user
 from db.session import SessionLocal
-from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario
+from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario, EstadoSolicitud
 from pydantic import BaseModel, EmailStr
 from routers.solicitudes import serialize_area, serialize_cama, serialize_edificio, serialize_habitacion, serialize_institucion, serialize_piso, serialize_servicio, serialize_solicitud
 from services.supabase_admin import SupabaseAdminError, create_auth_user, delete_auth_user, update_auth_user
@@ -97,18 +98,27 @@ def admin_metricas(
     usuario: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
+    # TZ
     try:
-        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d")
-        fin = datetime.strptime(fecha_fin, "%Y-%m-%d")
+        tz_cl = ZoneInfo("America/Santiago")
+    except Exception:
+        tz_cl = timezone.utc
+
+    try:
+        inicio = datetime.strptime(fecha_inicio, "%Y-%m-%d").replace(tzinfo=tz_cl)
+        fin = datetime.strptime(fecha_fin, "%Y-%m-%d").replace(tzinfo=tz_cl)
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido (YYYY-MM-DD)")
 
     if inicio > fin:
         raise HTTPException(status_code=400, detail="La fecha de inicio debe ser anterior a la fecha de fin")
 
+    inicio_utc = inicio.astimezone(timezone.utc)
+    fin_utc_exclusive = (fin + timedelta(days=1)).astimezone(timezone.utc)
+
     solicitudes_filtro = db.query(Solicitud).filter(
-        Solicitud.fecha_creacion >= inicio,
-        Solicitud.fecha_creacion <= fin,
+        Solicitud.fecha_creacion >= inicio_utc,
+        Solicitud.fecha_creacion < fin_utc_exclusive,
     )
 
     if usuario.rol == RolUsuario.JEFE_AREA:
@@ -162,10 +172,10 @@ def admin_metricas(
         solicitudes_filtro.join(Area, Area.id_area == Solicitud.id_area)
         .with_entities(
             Area.nombre_area,
-            func.date(Solicitud.fecha_creacion),
+            func.date(func.timezone('America/Santiago', Solicitud.fecha_creacion)),
             func.count(Solicitud.id_solicitud),
         )
-        .group_by(Area.nombre_area, func.date(Solicitud.fecha_creacion))
+        .group_by(Area.nombre_area, func.date(func.timezone('America/Santiago', Solicitud.fecha_creacion)))
         .all()
     )
 
@@ -178,10 +188,52 @@ def admin_metricas(
         for nombre_area, dia, total in metricas_area_dia_query
     ]
 
+    # Promedio de resolución (solo cerradas)
+    cerradas_q = solicitudes_filtro.filter(
+        Solicitud.estado_actual == EstadoSolicitud.CERRADA,
+        Solicitud.fecha_creacion.isnot(None),
+        Solicitud.fecha_cierre.isnot(None),
+    )
+
+    prom_area_query = (
+        cerradas_q.join(Area, Area.id_area == Solicitud.id_area)
+        .with_entities(
+            Area.nombre_area,
+            func.avg(func.extract('epoch', Solicitud.fecha_cierre - Solicitud.fecha_creacion)),
+        )
+        .group_by(Area.nombre_area)
+        .all()
+    )
+    promedio_res_area = []
+    for nombre, secs in prom_area_query:
+        secs_float = float(secs) if secs is not None else 0.0
+        promedio_res_area.append({"nombre_area": nombre, "horas": secs_float / 3600.0})
+
+    prom_hosp_query = (
+        cerradas_q
+        .join(Cama, Cama.id_cama == Solicitud.id_cama)
+        .join(Habitacion, Habitacion.id_habitacion == Cama.id_habitacion)
+        .join(Piso, Piso.id_piso == Habitacion.id_piso)
+        .join(Edificio, Edificio.id_edificio == Piso.id_edificio)
+        .join(Institucion, Institucion.id_institucion == Edificio.id_institucion)
+        .with_entities(
+            Institucion.nombre_institucion,
+            func.avg(func.extract('epoch', Solicitud.fecha_cierre - Solicitud.fecha_creacion)),
+        )
+        .group_by(Institucion.nombre_institucion)
+        .all()
+    )
+    promedio_res_hospital = []
+    for nombre, secs in prom_hosp_query:
+        secs_float = float(secs) if secs is not None else 0.0
+        promedio_res_hospital.append({"nombre_hospital": nombre, "horas": secs_float / 3600.0})
+
     return {
         "por_area": metricas_area_res,
         "por_hospital_estado": metricas_hospital_estado_res,
         "por_area_dia": metricas_area_dia_res,
+        "promedio_resolucion_area": promedio_res_area,
+        "promedio_resolucion_hospital": promedio_res_hospital,
     }
 
 
@@ -403,3 +455,116 @@ def admin_patch_user(
     db.refresh(usuario)
 
     return {"usuario": serialize_usuario(usuario)}
+
+
+class HabitacionCreateRequest(BaseModel):
+    nombre: str
+    id_piso: int
+    id_servicio: int
+
+
+class CamaCreateRequest(BaseModel):
+    id_habitacion: int
+    letra: str
+    identificador_qr: Optional[str] = None
+
+class CamaUpdateRequest(BaseModel):
+    activo: Optional[bool] = None
+
+
+@router.post("/habitaciones", summary="Crear habitación", status_code=status.HTTP_201_CREATED)
+def admin_crear_habitacion(
+    payload: HabitacionCreateRequest,
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    nombre = (payload.nombre or "").strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="Nombre de habitación requerido")
+
+    piso = db.query(Piso).filter(Piso.id_piso == payload.id_piso).first()
+    if not piso:
+        raise HTTPException(status_code=404, detail="Piso no encontrado")
+
+    servicio = db.query(Servicio).filter(Servicio.id_servicio == payload.id_servicio).first()
+    if not servicio:
+        raise HTTPException(status_code=404, detail="Servicio no encontrado")
+
+    existente = (
+        db.query(Habitacion)
+        .filter(Habitacion.id_piso == payload.id_piso, Habitacion.nombre_habitacion == nombre)
+        .first()
+    )
+    if existente:
+        raise HTTPException(status_code=400, detail="Ya existe una habitación con ese nombre en el piso indicado")
+
+    hab = Habitacion(nombre_habitacion=nombre, id_piso=piso.id_piso, id_servicio=servicio.id_servicio)
+    db.add(hab)
+    db.commit()
+    db.refresh(hab)
+    return {"habitacion": serialize_habitacion(hab)}
+
+
+@router.post("/camas", summary="Crear cama", status_code=status.HTTP_201_CREATED)
+def admin_crear_cama(
+    payload: CamaCreateRequest,
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    letra = (payload.letra or "").strip().upper()
+    if not letra:
+        raise HTTPException(status_code=400, detail="Letra de cama requerida")
+
+    hab = db.query(Habitacion).filter(Habitacion.id_habitacion == payload.id_habitacion).first()
+    if not hab:
+        raise HTTPException(status_code=404, detail="Habitación no encontrada")
+
+    dup = (
+        db.query(Cama)
+        .filter(Cama.id_habitacion == payload.id_habitacion, Cama.letra_cama == letra)
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=400, detail="Ya existe una cama con esa letra en la habitación")
+
+    qr = (payload.identificador_qr or secrets.token_hex(16)).strip()
+
+    # valida unicidad del QR
+    if db.query(Cama).filter(Cama.identificador_qr == qr).first():
+        # si vino desde el cliente, error; si fue generado, intenta regenerar unas veces
+        if payload.identificador_qr:
+            raise HTTPException(status_code=400, detail="El identificador QR ya existe")
+        for _ in range(4):
+            qr = secrets.token_hex(16)
+            if not db.query(Cama).filter(Cama.identificador_qr == qr).first():
+                break
+
+    cama = Cama(id_habitacion=hab.id_habitacion, letra_cama=letra, identificador_qr=qr, activo=True)
+    db.add(cama)
+    db.commit()
+    db.refresh(cama)
+    return {"cama": serialize_cama(cama)}
+
+
+@router.patch("/camas/{id_cama}", summary="Actualizar cama")
+def admin_patch_cama(
+    id_cama: int,
+    payload: CamaUpdateRequest,
+    _: Usuario = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    cama = db.query(Cama).filter(Cama.id_cama == id_cama).first()
+    if not cama:
+        raise HTTPException(status_code=404, detail="Cama no encontrada")
+
+    updated = False
+    if payload.activo is not None:
+        cama.activo = bool(payload.activo)
+        updated = True
+
+    if updated:
+        db.add(cama)
+        db.commit()
+        db.refresh(cama)
+
+    return {"cama": serialize_cama(cama)}
