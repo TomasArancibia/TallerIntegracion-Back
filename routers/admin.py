@@ -68,14 +68,7 @@ def admin_bootstrap(
     camas = db.query(Cama).order_by(Cama.id_cama).all()
 
     solicitudes_query = db.query(Solicitud).order_by(Solicitud.fecha_creacion.desc())
-    if usuario.rol == RolUsuario.JEFE_AREA:
-        if usuario.id_area is None:
-            raise HTTPException(
-                status_code=400,
-                detail="El usuario jefe de área no tiene un área asignada",
-            )
-        solicitudes_query = solicitudes_query.filter(Solicitud.id_area == usuario.id_area)
-
+    # Todos los usuarios ven todas las solicitudes (sin filtrar por área)
     solicitudes = solicitudes_query.all()
 
     return {
@@ -120,14 +113,7 @@ def admin_metricas(
         Solicitud.fecha_creacion >= inicio_utc,
         Solicitud.fecha_creacion < fin_utc_exclusive,
     )
-
-    if usuario.rol == RolUsuario.JEFE_AREA:
-        if usuario.id_area is None:
-            raise HTTPException(
-                status_code=400,
-                detail="El usuario jefe de área no tiene un área asignada",
-            )
-        solicitudes_filtro = solicitudes_filtro.filter(Solicitud.id_area == usuario.id_area)
+    # Todos los usuarios ven métricas globales (sin filtrar por área)
 
     # Métrica por área
     metricas_area = (
@@ -256,7 +242,7 @@ class UsuarioAdminUpdateRequest(BaseModel):
 
 @router.get("/users", summary="Listar jefes de área")
 def admin_list_users(
-    _: Usuario = Depends(require_admin),
+    _: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     usuarios = (
@@ -281,7 +267,7 @@ def _generate_temp_password(email: str) -> str:
 )
 def admin_create_user(
     payload: UsuarioCreateRequest,
-    admin: Usuario = Depends(require_admin),
+    admin: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     del admin  # unused, pero asegura que es admin
@@ -383,7 +369,7 @@ def admin_update_profile(
 )
 def admin_delete_user(
     user_id: str,
-    admin: Usuario = Depends(require_admin),
+    admin: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     del admin  # solo para forzar autenticación
@@ -424,7 +410,7 @@ def admin_delete_user(
 def admin_patch_user(
     user_id: str,
     payload: UsuarioAdminUpdateRequest,
-    admin: Usuario = Depends(require_admin),
+    admin: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     del admin
@@ -475,7 +461,7 @@ class CamaUpdateRequest(BaseModel):
 @router.post("/habitaciones", summary="Crear habitación", status_code=status.HTTP_201_CREATED)
 def admin_crear_habitacion(
     payload: HabitacionCreateRequest,
-    _: Usuario = Depends(require_admin),
+    _: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     nombre = (payload.nombre or "").strip()
@@ -508,7 +494,7 @@ def admin_crear_habitacion(
 @router.post("/camas", summary="Crear cama", status_code=status.HTTP_201_CREATED)
 def admin_crear_cama(
     payload: CamaCreateRequest,
-    _: Usuario = Depends(require_admin),
+    _: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     letra = (payload.letra or "").strip().upper()
@@ -550,7 +536,7 @@ def admin_crear_cama(
 def admin_patch_cama(
     id_cama: int,
     payload: CamaUpdateRequest,
-    _: Usuario = Depends(require_admin),
+    _: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
     cama = db.query(Cama).filter(Cama.id_cama == id_cama).first()
