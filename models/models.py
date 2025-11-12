@@ -10,7 +10,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from db.session import Base
@@ -113,6 +113,8 @@ class Cama(Base):
 
     habitacion = relationship("Habitacion", back_populates="camas")
     solicitudes = relationship("Solicitud", back_populates="cama")
+    button_events = relationship("PortalButtonEvent", back_populates="cama")
+    chat_messages = relationship("PortalChatMessage", back_populates="cama")
 
 
 class Usuario(Base):
@@ -167,3 +169,37 @@ class Solicitud(Base):
 
     cama = relationship("Cama", back_populates="solicitudes")
     area = relationship("Area", back_populates="solicitudes")
+
+
+class PortalButtonEvent(Base):
+    __tablename__ = "portal_button_event"
+
+    id = Column(Integer, primary_key=True, index=True)
+    button_code = Column(String(120), nullable=False)
+    button_label = Column(String(160))
+    categoria = Column(String(60))
+    source_path = Column(String(160))
+    target_path = Column(String(160))
+    id_cama = Column(Integer, ForeignKey("cama.id_cama"))
+    qr_code = Column(String(64))
+    portal_session_id = Column(String(64))
+    payload = Column(JSONB)
+    clicked_at = Column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
+
+    cama = relationship("Cama", back_populates="button_events")
+
+
+class PortalChatMessage(Base):
+    __tablename__ = "portal_chat_message"
+
+    id = Column(Integer, primary_key=True, index=True)
+    portal_session_id = Column(String(64))
+    id_cama = Column(Integer, ForeignKey("cama.id_cama"))
+    qr_code = Column(String(64))
+    role = Column(String(20), nullable=False)
+    message = Column(String, nullable=False)
+    thread_id = Column(String(64))
+    run_id = Column(String(64))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
+
+    cama = relationship("Cama", back_populates="chat_messages")
