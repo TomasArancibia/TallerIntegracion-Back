@@ -243,25 +243,35 @@ def admin_metricas(
     sesiones_por_cama: defaultdict[int, int] = defaultdict(int)
     session_gap = timedelta(minutes=10)
 
-    allowed_categories = {"info", "asistente_virtual"}
+    def resolve_portal_category(evt) -> Optional[str]:
+        raw = (evt.categoria or "").strip()
+        normalized = raw.lower()
+        path_blob = " ".join(
+            filter(None, [evt.source_path, evt.target_path, evt.button_code])
+        ).lower()
+
+        if normalized.startswith("info"):
+            return raw or "info"
+        if "asistente" in normalized:
+            return raw or "asistente_virtual"
+        if "chatbot" in normalized or "/chatbot" in path_blob or "chat" in path_blob:
+            return raw or "asistente_virtual"
+        if not normalized:
+            if "/info" in path_blob or "info" in path_blob:
+                return "info"
+        return None
+
     for evt in button_events:
-        categoria = (evt.categoria or "").strip().lower()
-        allow_event = False
-        if categoria in allowed_categories:
-            allow_event = True
-        else:
-            path = (evt.target_path or evt.source_path or "").lower()
-            if not categoria and ("chat" in path or "info" in path):
-                allow_event = True
-        if not allow_event:
+        event_category = resolve_portal_category(evt)
+        if not event_category:
             continue
         section_key = (evt.target_path or evt.source_path or evt.button_code or "desconocido").strip() or "desconocido"
         sections_counter[section_key] += 1
         meta = sections_meta.setdefault(section_key, {"label": None, "categoria": None})
         if not meta["label"] and evt.button_label:
             meta["label"] = evt.button_label
-        if not meta["categoria"] and evt.categoria:
-            meta["categoria"] = evt.categoria
+        if not meta["categoria"] and event_category:
+            meta["categoria"] = event_category
 
         if evt.id_cama is None or evt.clicked_at is None:
             continue
@@ -292,7 +302,7 @@ def admin_metricas(
 
     total_clicks = sum(sections_counter.values()) or 1
     secciones_visitadas = []
-    for section, total in sections_counter.most_common(8):
+    for section, total in sections_counter.most_common():
         meta = sections_meta.get(section, {})
         secciones_visitadas.append(
             {
