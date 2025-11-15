@@ -246,6 +246,10 @@ def admin_metricas(
 
     sections_counter: Counter[str] = Counter()
     sections_meta: dict[str, dict[str, Optional[str]]] = {}
+    section_sessions: defaultdict[str, set] = defaultdict(set)
+    total_sessions_set: set[str] = set()
+    section_sessions: defaultdict[str, set] = defaultdict(set)
+    total_sessions_set: set[str] = set()
     cama_last_event: dict[int, dict[str, Optional[datetime]]] = {}
     sesiones_por_cama: defaultdict[int, int] = defaultdict(int)
     session_gap = timedelta(minutes=10)
@@ -270,6 +274,15 @@ def admin_metricas(
 
     for evt in button_events:
         event_category = resolve_portal_category(evt)
+        raw_event_time = evt.clicked_at or datetime.now(timezone.utc)
+        if raw_event_time.tzinfo is None:
+            raw_event_time = raw_event_time.replace(tzinfo=timezone.utc)
+        session_id = (evt.portal_session_id or "").strip()
+        if not session_id:
+            bucket = int(raw_event_time.timestamp() // 600)
+            session_id = f"{evt.id_cama or 'unknown'}:{bucket}"
+        total_sessions_set.add(session_id)
+
         if not event_category:
             continue
         section_key = (evt.target_path or evt.source_path or evt.button_code or "desconocido").strip() or "desconocido"
@@ -279,6 +292,7 @@ def admin_metricas(
             meta["label"] = evt.button_label
         if not meta["categoria"] and event_category:
             meta["categoria"] = event_category
+        section_sessions[section_key].add(session_id)
 
         if evt.id_cama is None or evt.clicked_at is None:
             continue
@@ -307,6 +321,7 @@ def admin_metricas(
             if session_id:
                 state["session_id"] = session_id
 
+    total_sessions = len(total_sessions_set) or 1
     total_clicks = sum(sections_counter.values()) or 1
     secciones_visitadas = []
     for section, total in sections_counter.most_common():
@@ -317,7 +332,7 @@ def admin_metricas(
                 "label": meta.get("label"),
                 "categoria": meta.get("categoria"),
                 "total_clicks": total,
-                "porcentaje": (total / total_clicks) * 100.0,
+                "porcentaje": (len(section_sessions.get(section, set())) / total_sessions) * 100.0,
             }
         )
 
