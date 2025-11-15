@@ -118,6 +118,7 @@ def admin_metricas(
 
     inicio_utc = inicio.astimezone(timezone.utc)
     fin_utc_exclusive = (fin + timedelta(days=1)).astimezone(timezone.utc)
+    dias_rango = max(1, (fin.date() - inicio.date()).days + 1)
 
     solicitudes_filtro = db.query(Solicitud).filter(
         Solicitud.fecha_creacion >= inicio_utc,
@@ -252,6 +253,7 @@ def admin_metricas(
     total_sessions_set: set[str] = set()
     cama_last_event: dict[int, dict[str, Optional[datetime]]] = {}
     sesiones_por_cama: defaultdict[int, int] = defaultdict(int)
+    session_first_day: dict[str, str] = {}
     session_gap = timedelta(minutes=10)
 
     def resolve_portal_category(evt) -> Optional[str]:
@@ -282,6 +284,9 @@ def admin_metricas(
             bucket = int(raw_event_time.timestamp() // 600)
             session_id = f"{evt.id_cama or 'unknown'}:{bucket}"
         total_sessions_set.add(session_id)
+        event_time_local = raw_event_time.astimezone(tz_cl)
+        day_key = event_time_local.date().isoformat()
+        session_first_day.setdefault(session_id, day_key)
 
         if not event_category:
             continue
@@ -321,7 +326,8 @@ def admin_metricas(
             if session_id:
                 state["session_id"] = session_id
 
-    total_sessions = len(total_sessions_set) or 1
+    total_sessions_unicos = len(total_sessions_set)
+    total_sessions = total_sessions_unicos or 1
     total_clicks = sum(sections_counter.values()) or 1
     secciones_visitadas = []
     for section, total in sections_counter.most_common():
@@ -335,6 +341,18 @@ def admin_metricas(
                 "porcentaje": (len(section_sessions.get(section, set())) / total_sessions) * 100.0,
             }
         )
+
+    sesiones_por_dia = []
+    if session_first_day:
+        day_counter = Counter(session_first_day.values())
+        for dia in sorted(day_counter.keys()):
+            sesiones_por_dia.append({"dia": dia, "total_sesiones": day_counter[dia]})
+
+    sesiones_resumen = {
+        "total_sesiones": total_sessions_unicos,
+        "promedio_diario": total_sessions_unicos / dias_rango if dias_rango else 0.0,
+        "dias_medidos": dias_rango,
+    }
 
     ranking_camas = []
     if sesiones_por_cama:
@@ -475,6 +493,8 @@ def admin_metricas(
         "portal_analytics": {
             "secciones_mas_visitadas": secciones_visitadas,
             "camas_con_mas_sesiones": ranking_camas,
+            "sesiones_por_dia": sesiones_por_dia,
+            "sesiones_resumen": sesiones_resumen,
             "chat_keywords": chat_keywords,
             "chat_bigrams": chat_bigrams,
             "chat_topics": chat_topics,
