@@ -1,7 +1,10 @@
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+import re
 import secrets
 import string
+import unicodedata
 import uuid
 from typing import Optional
 
@@ -11,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from auth.dependencies import require_admin, require_authenticated_user
 from db.session import SessionLocal
-from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario, EstadoSolicitud
+from models.models import Area, Cama, Edificio, Habitacion, Institucion, Piso, RolUsuario, Servicio, Solicitud, Usuario, EstadoSolicitud, PortalButtonEvent, PortalChatMessage
 from pydantic import BaseModel, EmailStr
 from routers.solicitudes import serialize_area, serialize_cama, serialize_edificio, serialize_habitacion, serialize_institucion, serialize_piso, serialize_servicio, serialize_solicitud
 from services.supabase_admin import SupabaseAdminError, create_auth_user, delete_auth_user, update_auth_user
@@ -214,12 +217,196 @@ def admin_metricas(
         secs_float = float(secs) if secs is not None else 0.0
         promedio_res_hospital.append({"nombre_hospital": nombre, "horas": secs_float / 3600.0})
 
+    # Portal QR y chatbot
+    button_events = (
+        db.query(
+            PortalButtonEvent.id_cama,
+            PortalButtonEvent.button_code,
+            PortalButtonEvent.button_label,
+            PortalButtonEvent.categoria,
+            PortalButtonEvent.source_path,
+            PortalButtonEvent.target_path,
+            PortalButtonEvent.portal_session_id,
+            PortalButtonEvent.clicked_at,
+        )
+        .filter(
+            PortalButtonEvent.clicked_at >= inicio_utc,
+            PortalButtonEvent.clicked_at < fin_utc_exclusive,
+        )
+        .order_by(PortalButtonEvent.id_cama.asc(), PortalButtonEvent.clicked_at.asc())
+        .all()
+    )
+
+    sections_counter: Counter[str] = Counter()
+    sections_meta: dict[str, dict[str, Optional[str]]] = {}
+    cama_last_event: dict[int, dict[str, Optional[datetime]]] = {}
+    sesiones_por_cama: defaultdict[int, int] = defaultdict(int)
+    session_gap = timedelta(minutes=10)
+
+    allowed_categories = {"info", "asistente_virtual"}
+    for evt in button_events:
+        categoria = (evt.categoria or "").strip().lower()
+        allow_event = False
+        if categoria in allowed_categories:
+            allow_event = True
+        else:
+            path = (evt.target_path or evt.source_path or "").lower()
+            if not categoria and ("chat" in path or "info" in path):
+                allow_event = True
+        if not allow_event:
+            continue
+        section_key = (evt.target_path or evt.source_path or evt.button_code or "desconocido").strip() or "desconocido"
+        sections_counter[section_key] += 1
+        meta = sections_meta.setdefault(section_key, {"label": None, "categoria": None})
+        if not meta["label"] and evt.button_label:
+            meta["label"] = evt.button_label
+        if not meta["categoria"] and evt.categoria:
+            meta["categoria"] = evt.categoria
+
+        if evt.id_cama is None or evt.clicked_at is None:
+            continue
+        event_time = evt.clicked_at
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=timezone.utc)
+        state = cama_last_event.get(evt.id_cama)
+        session_id = (evt.portal_session_id or "").strip() or None
+
+        start_new_session = False
+        if state is None:
+            start_new_session = True
+        else:
+            last_time = state.get("last_time")
+            last_session_id = state.get("session_id")
+            if session_id and last_session_id and session_id != last_session_id:
+                start_new_session = True
+            elif last_time is None or (event_time - last_time) > session_gap:
+                start_new_session = True
+
+        if start_new_session:
+            sesiones_por_cama[evt.id_cama] += 1
+            cama_last_event[evt.id_cama] = {"last_time": event_time, "session_id": session_id}
+        else:
+            state["last_time"] = event_time
+            if session_id:
+                state["session_id"] = session_id
+
+    total_clicks = sum(sections_counter.values()) or 1
+    secciones_visitadas = []
+    for section, total in sections_counter.most_common(8):
+        meta = sections_meta.get(section, {})
+        secciones_visitadas.append(
+            {
+                "seccion": section,
+                "label": meta.get("label"),
+                "categoria": meta.get("categoria"),
+                "total_clicks": total,
+                "porcentaje": (total / total_clicks) * 100.0,
+            }
+        )
+
+    ranking_camas = []
+    if sesiones_por_cama:
+        ranking = sorted(sesiones_por_cama.items(), key=lambda item: (-item[1], item[0]))[:5]
+        cama_ids = [cid for cid, _ in ranking]
+        cama_info_map: dict[int, dict[str, Optional[str]]] = {}
+        if cama_ids:
+            cama_rows = (
+                db.query(
+                    Cama.id_cama,
+                    Cama.letra_cama,
+                    Habitacion.nombre_habitacion,
+                    Servicio.nombre_servicio,
+                    Piso.numero_piso,
+                    Edificio.nombre_edificio,
+                    Institucion.nombre_institucion,
+                )
+                .join(Habitacion, Habitacion.id_habitacion == Cama.id_habitacion)
+                .join(Piso, Piso.id_piso == Habitacion.id_piso)
+                .join(Edificio, Edificio.id_edificio == Piso.id_edificio)
+                .join(Institucion, Institucion.id_institucion == Edificio.id_institucion)
+                .join(Servicio, Servicio.id_servicio == Habitacion.id_servicio)
+                .filter(Cama.id_cama.in_(cama_ids))
+                .all()
+            )
+            for row in cama_rows:
+                cama_info_map[row.id_cama] = {
+                    "cama": row.letra_cama,
+                    "habitacion": row.nombre_habitacion,
+                    "servicio": row.nombre_servicio,
+                    "institucion": row.nombre_institucion,
+                    "edificio": row.nombre_edificio,
+                    "piso": row.numero_piso,
+                }
+        for cama_id, total in ranking:
+            info = cama_info_map.get(cama_id, {})
+            ranking_camas.append(
+                {
+                    "id_cama": cama_id,
+                    "total_sesiones": total,
+                    "cama": info.get("cama"),
+                    "habitacion": info.get("habitacion"),
+                    "servicio": info.get("servicio"),
+                    "institucion": info.get("institucion"),
+                    "edificio": info.get("edificio"),
+                    "piso": info.get("piso"),
+                }
+            )
+
+    # Palabras frecuentes en el chatbot
+    chat_messages = (
+        db.query(PortalChatMessage.message)
+        .filter(
+            PortalChatMessage.created_at >= inicio_utc,
+            PortalChatMessage.created_at < fin_utc_exclusive,
+            PortalChatMessage.role == "user",
+        )
+        .all()
+    )
+    base_stopwords = {
+        "el", "la", "los", "las", "de", "del", "y", "en", "que", "por", "para", "con", "una", "uno",
+        "como", "al", "se", "su", "sus", "es", "mi", "me", "ya", "un", "lo", "les", "si", "gracias",
+        "hola", "buenos", "dias", "tardes", "noche", "buenas", "favor", "porfa",
+    }
+
+    def normalize_token(token: str) -> str:
+        normalized = unicodedata.normalize("NFKD", token.lower())
+        return "".join(ch for ch in normalized if unicodedata.category(ch)[0] != "M")
+
+    stopwords = {normalize_token(word) for word in base_stopwords}
+    token_pattern = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", re.UNICODE)
+    keyword_counter: Counter[str] = Counter()
+    keyword_display: dict[str, str] = {}
+    for (message,) in chat_messages:
+        if not message:
+            continue
+        for raw_token in token_pattern.findall(message):
+            token = normalize_token(raw_token)
+            if len(token) < 3 or token in stopwords:
+                continue
+            keyword_counter[token] += 1
+            keyword_display.setdefault(token, raw_token.strip())
+
+    total_keywords = sum(keyword_counter.values()) or 1
+    chat_keywords = [
+        {
+            "keyword": keyword_display.get(keyword, keyword),
+            "total": total,
+            "porcentaje": (total / total_keywords) * 100.0,
+        }
+        for keyword, total in keyword_counter.most_common(10)
+    ]
+
     return {
         "por_area": metricas_area_res,
         "por_hospital_estado": metricas_hospital_estado_res,
         "por_area_dia": metricas_area_dia_res,
         "promedio_resolucion_area": promedio_res_area,
         "promedio_resolucion_hospital": promedio_res_hospital,
+        "portal_analytics": {
+            "secciones_mas_visitadas": secciones_visitadas,
+            "camas_con_mas_sesiones": ranking_camas,
+            "chat_keywords": chat_keywords,
+        },
     }
 
 
