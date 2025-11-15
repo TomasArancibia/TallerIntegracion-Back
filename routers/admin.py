@@ -19,6 +19,13 @@ from pydantic import BaseModel, EmailStr
 from routers.solicitudes import serialize_area, serialize_cama, serialize_edificio, serialize_habitacion, serialize_institucion, serialize_piso, serialize_servicio, serialize_solicitud
 from services.supabase_admin import SupabaseAdminError, create_auth_user, delete_auth_user, update_auth_user
 
+CHAT_TOPICS = [
+    {"id": "visitas", "label": "Visitas y acompanantes", "keywords": ["visita", "visitas", "acompan", "horario", "entrada", "salida"]},
+    {"id": "pagos", "label": "Pagos y cuentas", "keywords": ["pago", "pagos", "cuenta", "cuentas", "costo", "precio", "copago", "boleta"]},
+    {"id": "resultados", "label": "Resultados y examenes", "keywords": ["resultado", "resultados", "examen", "examenes", "laboratorio", "analisis"]},
+    {"id": "solicitudes", "label": "Solicitudes y estados", "keywords": ["solicitud", "solicitudes", "estado", "pendiente", "tramite"]},
+]
+
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -385,16 +392,32 @@ def admin_metricas(
     stopwords = {normalize_token(word) for word in base_stopwords}
     token_pattern = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+", re.UNICODE)
     keyword_counter: Counter[str] = Counter()
+    bigram_counter: Counter[str] = Counter()
+    topic_counter: Counter[str] = Counter()
     keyword_display: dict[str, str] = {}
+    message_count = len(chat_messages)
     for (message,) in chat_messages:
         if not message:
             continue
+        tokens_in_msg: list[str] = []
         for raw_token in token_pattern.findall(message):
             token = normalize_token(raw_token)
             if len(token) < 3 or token in stopwords:
                 continue
             keyword_counter[token] += 1
             keyword_display.setdefault(token, raw_token.strip())
+            tokens_in_msg.append(token)
+
+        # bigramas por mensaje
+        for idx in range(len(tokens_in_msg) - 1):
+            bigram = f"{tokens_in_msg[idx]} {tokens_in_msg[idx + 1]}"
+            bigram_counter[bigram] += 1
+
+        token_set = set(tokens_in_msg)
+        if token_set:
+            for topic in CHAT_TOPICS:
+                if any(word in token_set for word in topic["keywords"]):
+                    topic_counter[topic["id"]] += 1
 
     total_keywords = sum(keyword_counter.values()) or 1
     chat_keywords = [
@@ -403,7 +426,29 @@ def admin_metricas(
             "total": total,
             "porcentaje": (total / total_keywords) * 100.0,
         }
-        for keyword, total in keyword_counter.most_common(10)
+        for keyword, total in keyword_counter.most_common(20)
+    ]
+
+    total_bigrams = sum(bigram_counter.values()) or 1
+    chat_bigrams = [
+        {
+            "frase": bigram,
+            "total": total,
+            "porcentaje": (total / total_bigrams) * 100.0,
+        }
+        for bigram, total in bigram_counter.most_common(20)
+    ]
+
+    total_topic_base = message_count or 1
+    chat_topics = [
+        {
+            "id": topic["id"],
+            "label": topic["label"],
+            "total": topic_counter.get(topic["id"], 0),
+            "porcentaje": (topic_counter.get(topic["id"], 0) / total_topic_base) * 100.0,
+        }
+        for topic in CHAT_TOPICS
+        if topic_counter.get(topic["id"], 0) > 0
     ]
 
     return {
@@ -416,6 +461,8 @@ def admin_metricas(
             "secciones_mas_visitadas": secciones_visitadas,
             "camas_con_mas_sesiones": ranking_camas,
             "chat_keywords": chat_keywords,
+            "chat_bigrams": chat_bigrams,
+            "chat_topics": chat_topics,
         },
     }
 
