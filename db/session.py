@@ -12,8 +12,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,   # evita usar conexiones muertas
-    pool_size=3,          # límites modestos para free tier
-    max_overflow=0,
+    pool_size=6,          # límites modestos para free tier
+    max_overflow=2,
 )
 
 # Sesión local para interactuar con la DB
