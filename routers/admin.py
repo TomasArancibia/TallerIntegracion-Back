@@ -98,6 +98,7 @@ def admin_bootstrap(
 def admin_metricas(
     fecha_inicio: str = Query(..., description="YYYY-MM-DD"),
     fecha_fin: str = Query(..., description="YYYY-MM-DD"),
+    camas: list[int] | None = Query(None, description="IDs de cama para filtrar", alias="camas"),
     usuario: Usuario = Depends(require_authenticated_user),
     db: Session = Depends(get_db),
 ):
@@ -119,11 +120,14 @@ def admin_metricas(
     inicio_utc = inicio.astimezone(timezone.utc)
     fin_utc_exclusive = (fin + timedelta(days=1)).astimezone(timezone.utc)
     dias_rango = max(1, (fin.date() - inicio.date()).days + 1)
+    camas_filtradas = [cid for cid in (camas or []) if cid is not None]
 
     solicitudes_filtro = db.query(Solicitud).filter(
         Solicitud.fecha_creacion >= inicio_utc,
         Solicitud.fecha_creacion < fin_utc_exclusive,
     )
+    if camas_filtradas:
+        solicitudes_filtro = solicitudes_filtro.filter(Solicitud.id_cama.in_(camas_filtradas))
     # Todos los usuarios ven métricas globales (sin filtrar por área)
 
     # Métrica por área
@@ -226,23 +230,23 @@ def admin_metricas(
         promedio_res_hospital.append({"nombre_hospital": nombre, "horas": secs_float / 3600.0})
 
     # Portal QR y chatbot
+    button_events_q = db.query(
+        PortalButtonEvent.id_cama,
+        PortalButtonEvent.button_code,
+        PortalButtonEvent.button_label,
+        PortalButtonEvent.categoria,
+        PortalButtonEvent.source_path,
+        PortalButtonEvent.target_path,
+        PortalButtonEvent.portal_session_id,
+        PortalButtonEvent.clicked_at,
+    ).filter(
+        PortalButtonEvent.clicked_at >= inicio_utc,
+        PortalButtonEvent.clicked_at < fin_utc_exclusive,
+    )
+    if camas_filtradas:
+        button_events_q = button_events_q.filter(PortalButtonEvent.id_cama.in_(camas_filtradas))
     button_events = (
-        db.query(
-            PortalButtonEvent.id_cama,
-            PortalButtonEvent.button_code,
-            PortalButtonEvent.button_label,
-            PortalButtonEvent.categoria,
-            PortalButtonEvent.source_path,
-            PortalButtonEvent.target_path,
-            PortalButtonEvent.portal_session_id,
-            PortalButtonEvent.clicked_at,
-        )
-        .filter(
-            PortalButtonEvent.clicked_at >= inicio_utc,
-            PortalButtonEvent.clicked_at < fin_utc_exclusive,
-        )
-        .order_by(PortalButtonEvent.id_cama.asc(), PortalButtonEvent.clicked_at.asc())
-        .all()
+        button_events_q.order_by(PortalButtonEvent.id_cama.asc(), PortalButtonEvent.clicked_at.asc()).all()
     )
 
     sections_counter: Counter[str] = Counter()
@@ -403,15 +407,14 @@ def admin_metricas(
             )
 
     # Palabras frecuentes en el chatbot
-    chat_messages = (
-        db.query(PortalChatMessage.message)
-        .filter(
-            PortalChatMessage.created_at >= inicio_utc,
-            PortalChatMessage.created_at < fin_utc_exclusive,
-            PortalChatMessage.role == "user",
-        )
-        .all()
+    chat_messages_q = db.query(PortalChatMessage.message).filter(
+        PortalChatMessage.created_at >= inicio_utc,
+        PortalChatMessage.created_at < fin_utc_exclusive,
+        PortalChatMessage.role == "user",
     )
+    if camas_filtradas:
+        chat_messages_q = chat_messages_q.filter(PortalChatMessage.id_cama.in_(camas_filtradas))
+    chat_messages = chat_messages_q.all()
     base_stopwords = {
         "el", "la", "los", "las", "de", "del", "y", "en", "que", "por", "para", "con", "una", "uno",
         "como", "al", "se", "su", "sus", "es", "mi", "me", "ya", "un", "lo", "les", "si", "gracias",
