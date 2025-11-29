@@ -242,6 +242,7 @@ def admin_metricas(
     ).filter(
         PortalButtonEvent.clicked_at >= inicio_utc,
         PortalButtonEvent.clicked_at < fin_utc_exclusive,
+        PortalButtonEvent.id_cama.isnot(None),
     )
     if camas_filtradas:
         button_events_q = button_events_q.filter(PortalButtonEvent.id_cama.in_(camas_filtradas))
@@ -255,10 +256,8 @@ def admin_metricas(
     total_sessions_set: set[str] = set()
     section_sessions: defaultdict[str, set] = defaultdict(set)
     total_sessions_set: set[str] = set()
-    cama_last_event: dict[int, dict[str, Optional[datetime]]] = {}
-    sesiones_por_cama: defaultdict[int, int] = defaultdict(int)
+    sesiones_por_cama_sessions: defaultdict[int, set[str]] = defaultdict(set)
     session_first_day: dict[str, str] = {}
-    session_gap = timedelta(minutes=10)
 
     def resolve_portal_category(evt) -> Optional[str]:
         raw = (evt.categoria or "").strip()
@@ -279,7 +278,10 @@ def admin_metricas(
         return None
 
     for evt in button_events:
-        event_category = resolve_portal_category(evt)
+        # descartamos eventos sin cama o sin timestamp para mantener coherencia total vs ranking
+        if evt.id_cama is None or evt.clicked_at is None:
+            continue
+
         raw_event_time = evt.clicked_at or datetime.now(timezone.utc)
         if raw_event_time.tzinfo is None:
             raw_event_time = raw_event_time.replace(tzinfo=timezone.utc)
@@ -287,11 +289,18 @@ def admin_metricas(
         if not session_id:
             bucket = int(raw_event_time.timestamp() // 600)
             session_id = f"{evt.id_cama or 'unknown'}:{bucket}"
+
+        # registrar sesion unica y dia
         total_sessions_set.add(session_id)
         event_time_local = raw_event_time.astimezone(tz_cl)
         day_key = event_time_local.date().isoformat()
         session_first_day.setdefault(session_id, day_key)
 
+        # agrupar por cama usando session_id (sin gaps)
+        sesiones_por_cama_sessions[evt.id_cama].add(session_id)
+
+        # secciones solo si categoria resolvio
+        event_category = resolve_portal_category(evt)
         if not event_category:
             continue
         section_key = (evt.target_path or evt.source_path or evt.button_code or "desconocido").strip() or "desconocido"
@@ -302,33 +311,6 @@ def admin_metricas(
         if not meta["categoria"] and event_category:
             meta["categoria"] = event_category
         section_sessions[section_key].add(session_id)
-
-        if evt.id_cama is None or evt.clicked_at is None:
-            continue
-        event_time = evt.clicked_at
-        if event_time.tzinfo is None:
-            event_time = event_time.replace(tzinfo=timezone.utc)
-        state = cama_last_event.get(evt.id_cama)
-        session_id = (evt.portal_session_id or "").strip() or None
-
-        start_new_session = False
-        if state is None:
-            start_new_session = True
-        else:
-            last_time = state.get("last_time")
-            last_session_id = state.get("session_id")
-            if session_id and last_session_id and session_id != last_session_id:
-                start_new_session = True
-            elif last_time is None or (event_time - last_time) > session_gap:
-                start_new_session = True
-
-        if start_new_session:
-            sesiones_por_cama[evt.id_cama] += 1
-            cama_last_event[evt.id_cama] = {"last_time": event_time, "session_id": session_id}
-        else:
-            state["last_time"] = event_time
-            if session_id:
-                state["session_id"] = session_id
 
     total_sessions_unicos = len(total_sessions_set)
     total_sessions = total_sessions_unicos or 1
@@ -359,8 +341,9 @@ def admin_metricas(
     }
 
     ranking_camas = []
-    if sesiones_por_cama:
-        ranking = sorted(sesiones_por_cama.items(), key=lambda item: (-item[1], item[0]))[:5]
+    if sesiones_por_cama_sessions:
+        sesiones_por_cama = {cid: len(sids) for cid, sids in sesiones_por_cama_sessions.items()}
+        ranking = sorted(sesiones_por_cama.items(), key=lambda item: (-item[1], item[0]))
         cama_ids = [cid for cid, _ in ranking]
         cama_info_map: dict[int, dict[str, Optional[str]]] = {}
         if cama_ids:
