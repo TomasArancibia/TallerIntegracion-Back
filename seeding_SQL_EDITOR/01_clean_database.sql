@@ -1,6 +1,8 @@
 -- EJECUTAR COMPLETO ANTES DEL SEEDING EXHAUSTIVO
 -- Elimina las tablas y tipos existentes para permitir recrear el esquema desde cero.
 
+DROP TABLE IF EXISTS portal_chat_message CASCADE;
+DROP TABLE IF EXISTS portal_button_event CASCADE;
 DROP TABLE IF EXISTS solicitud CASCADE;
 DROP TABLE IF EXISTS usuario CASCADE;
 DROP TABLE IF EXISTS cama CASCADE;

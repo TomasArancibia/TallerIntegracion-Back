@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from routers import solicitudes
 from routers import qr 
 from routers import admin
+from routers import analytics
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(solicitudes.router)
 app.include_router(qr.router)
 app.include_router(admin.router)
+app.include_router(analytics.router)
 from routers.chat import router as chat_router
 app.include_router(chat_router)
 
